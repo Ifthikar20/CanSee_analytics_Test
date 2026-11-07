@@ -402,7 +402,7 @@ class TestEndedTrialReverify:
             ),
             patch.object(polar_client, "create_checkout", return_value=checkout) as create,
         ):
-            url = polar_billing.create_checkout(user, annual=False, origin="http://t")
+            url = polar_billing.create_checkout(user, plan=Plan.PROMPTS_100, origin="http://t")
         create.assert_called_once()
         assert url.startswith("https://polar.sh/c/1")
         assert Subscription.objects.get(user=user).status == SubscriptionStatus.CANCELED
@@ -435,6 +435,7 @@ class TestSessionPayloadContract:
             "trial_end": end.isoformat(),
             "current_period_end": end.isoformat(),
             "cancel_at_period_end": False,
+            "source": "user",
         }
 
     def test_cancelled_trial_still_reports_its_end(self):
@@ -470,6 +471,7 @@ class TestSessionPayloadContract:
             "trial_end": None,
             "current_period_end": None,
             "cancel_at_period_end": False,
+            "source": "user",
         }
 
     def test_past_due_keeps_the_tier_but_not_access(self):

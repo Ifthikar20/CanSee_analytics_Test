@@ -22,11 +22,17 @@ from core.utils.constants import Plan, SubscriptionStatus
 
 MONTHLY_ID = "11111111-1111-1111-1111-111111111111"
 ANNUAL_ID = "22222222-2222-2222-2222-222222222222"
+# The two self-serve plan products. Checkout and billing_ready need both
+# (polar_billing.checkout_ready); the Pro products stay for Pro subscribers.
+PROMPTS_100_ID = "33333333-3333-3333-3333-333333333333"
+PROMPTS_200_ID = "44444444-4444-4444-4444-444444444444"
 
 polar_configured = override_settings(
     POLAR_ACCESS_TOKEN="token",
     POLAR_PRODUCT_PRO_MONTHLY_ID=MONTHLY_ID,
     POLAR_PRODUCT_PRO_ANNUAL_ID=ANNUAL_ID,
+    POLAR_PRODUCT_PROMPTS_100_ID=PROMPTS_100_ID,
+    POLAR_PRODUCT_PROMPTS_200_ID=PROMPTS_200_ID,
 )
 
 
@@ -221,7 +227,7 @@ class TestCheckoutView:
             return_value=_state([_polar_sub(status="trialing")]),
         ), patch.object(polar_client, "create_checkout") as mock_create:
             resp = self._client(user).post(
-                "/api/v1/billing/checkout/", {"plan": "pro"}, format="json",
+                "/api/v1/billing/checkout/", {"plan": "prompts_100"}, format="json",
             )
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "already_subscribed"
@@ -236,24 +242,14 @@ class TestCheckoutView:
         checkout = SimpleNamespace(id="co_1", url="https://sandbox.polar.sh/checkout/co_1")
         with patch.object(polar_client, "create_checkout", return_value=checkout) as mock_create:
             resp = self._client(user).post(
-                "/api/v1/billing/checkout/", {"plan": "pro", "annual": False}, format="json",
+                "/api/v1/billing/checkout/", {"plan": "prompts_100"}, format="json",
             )
         assert resp.status_code == 200
         assert resp.json()["data"]["data"]["checkout_url"].startswith("https://sandbox.polar.sh")
         kwargs = mock_create.call_args.kwargs
-        assert kwargs["product_ids"] == [MONTHLY_ID]
+        assert kwargs["product_ids"] == [PROMPTS_100_ID]
         assert kwargs["external_customer_id"] == str(user.id)
         assert "checkout_id={CHECKOUT_ID}" in kwargs["success_url"]
-
-    @polar_configured
-    def test_annual_uses_annual_product(self):
-        user = UserFactory(plan="starter")
-        checkout = SimpleNamespace(id="co_1", url="https://x")
-        with patch.object(polar_client, "create_checkout", return_value=checkout) as mock_create:
-            self._client(user).post(
-                "/api/v1/billing/checkout/", {"plan": "pro", "annual": True}, format="json",
-            )
-        assert mock_create.call_args.kwargs["product_ids"] == [ANNUAL_ID]
 
     @polar_configured
     def test_checkout_url_carries_light_theme(self):
@@ -261,7 +257,7 @@ class TestCheckoutView:
         checkout = SimpleNamespace(id="co_1", url="https://sandbox.polar.sh/checkout/co_1")
         with patch.object(polar_client, "create_checkout", return_value=checkout):
             resp = self._client(user).post(
-                "/api/v1/billing/checkout/", {"plan": "pro"}, format="json",
+                "/api/v1/billing/checkout/", {"plan": "prompts_100"}, format="json",
             )
         assert resp.json()["data"]["data"]["checkout_url"].endswith("?theme=light")
 
@@ -273,7 +269,7 @@ class TestCheckoutView:
         checkout = SimpleNamespace(id="co_1", url="https://x")
         with patch.object(polar_client, "create_checkout", return_value=checkout) as mock_create:
             self._client(user).post(
-                "/api/v1/billing/checkout/", {"plan": "pro"}, format="json",
+                "/api/v1/billing/checkout/", {"plan": "prompts_100"}, format="json",
                 HTTP_ORIGIN="https://evil.example",
             )
         from django.conf import settings as dj_settings
@@ -290,7 +286,7 @@ class TestCheckoutView:
             polar_client, "create_checkout", return_value=checkout
         ) as mock_create:
             self._client(user).post(
-                "/api/v1/billing/checkout/", {"plan": "pro"}, format="json",
+                "/api/v1/billing/checkout/", {"plan": "prompts_100"}, format="json",
                 HTTP_ORIGIN="https://app.cansee.ai",
             )
         assert mock_create.call_args.kwargs["success_url"].startswith(
@@ -303,7 +299,7 @@ class TestCheckoutView:
         checkout = SimpleNamespace(id="co_1", url="https://x")
         with patch.object(polar_client, "create_checkout", return_value=checkout) as mock_create:
             self._client(user).post(
-                "/api/v1/billing/checkout/", {"plan": "pro"}, format="json",
+                "/api/v1/billing/checkout/", {"plan": "prompts_100"}, format="json",
                 HTTP_X_FORWARDED_FOR="203.0.113.9, 10.0.0.1",
             )
         assert mock_create.call_args.kwargs["customer_ip_address"] == "203.0.113.9"
@@ -322,7 +318,7 @@ class TestCheckoutView:
             polar_client, "create_checkout", side_effect=[reject, checkout]
         ) as mock_create:
             resp = self._client(user).post(
-                "/api/v1/billing/checkout/", {"plan": "pro"}, format="json",
+                "/api/v1/billing/checkout/", {"plan": "prompts_100"}, format="json",
             )
         assert resp.status_code == 200
         assert mock_create.call_count == 2
@@ -337,7 +333,7 @@ class TestCheckoutView:
             polar_client, "create_checkout", side_effect=reject
         ) as mock_create:
             resp = self._client(user).post(
-                "/api/v1/billing/checkout/", {"plan": "pro"}, format="json",
+                "/api/v1/billing/checkout/", {"plan": "prompts_100"}, format="json",
             )
         assert resp.status_code == 400
         assert mock_create.call_count == 1
@@ -359,9 +355,10 @@ class TestCheckoutView:
             status=SubscriptionStatus.ACTIVE,
         )
         resp = self._client(user).post(
-            "/api/v1/billing/checkout/", {"plan": "pro"}, format="json",
+            "/api/v1/billing/checkout/", {"plan": "prompts_100"}, format="json",
         )
         assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "already_subscribed"
 
 
 @pytest.mark.django_db

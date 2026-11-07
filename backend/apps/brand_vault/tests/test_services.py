@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from apps.brand_vault.models import BrandFact, FactRevision, FactStatus
-from apps.brand_vault.services.fact_extractor import persist_extracted_items
+from apps.brand_vault.services.fact_extractor import _persist_items
 from apps.brand_vault.services.fact_versioning import (
     approve_fact,
     reject_fact,
@@ -26,12 +26,15 @@ def _quiet_pipelines(settings):
 
 
 class TestPersistExtractedItems:
+    # The public persist_extracted_items wrapper was removed in 3320cdf;
+    # the persistence rules it exposed live on in _persist_items, which
+    # extract_facts_for_chunk calls with the LLM's parsed items.
     def test_drops_low_confidence(self):
         website = WebsiteFactory()
         items = [
             {"subject": "Acme", "predicate": "is", "object": "SaaS tool", "confidence": 0.2},
         ]
-        out = persist_extracted_items(items, website=website)
+        out = _persist_items(items, website=website)
         assert out == []
         assert BrandFact.objects.count() == 0
 
@@ -40,7 +43,7 @@ class TestPersistExtractedItems:
         items = [
             {"subject": "Acme", "predicate": "founded in", "object": "2019", "confidence": 0.95},
         ]
-        out = persist_extracted_items(items, website=website)
+        out = _persist_items(items, website=website)
         assert len(out) == 1
         assert out[0].status == FactStatus.AUTO
 
@@ -49,7 +52,7 @@ class TestPersistExtractedItems:
         items = [
             {"subject": "Acme", "predicate": "supports", "object": "SSO", "confidence": 0.6},
         ]
-        out = persist_extracted_items(items, website=website)
+        out = _persist_items(items, website=website)
         assert out[0].status == FactStatus.PENDING
 
     def test_dedupes_existing(self):
@@ -61,7 +64,7 @@ class TestPersistExtractedItems:
         items = [
             {"subject": "acme", "predicate": "IS", "object": "A SaaS", "confidence": 0.95},
         ]
-        out = persist_extracted_items(items, website=website)
+        out = _persist_items(items, website=website)
         assert out == []
         assert BrandFact.objects.count() == 1
 

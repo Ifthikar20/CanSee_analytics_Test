@@ -169,12 +169,14 @@ class TestChangeBillingCycle:
         assert resp.json()["error"]["code"] == "already_on_plan"
 
     @polar_configured
-    def test_missing_annual_flag_is_rejected(self):
+    def test_missing_plan_and_annual_is_rejected(self):
+        # Neither {"plan"} nor the legacy {"annual"}: asked to choose a plan.
         user = UserFactory()
         _sub_row(user, status=SubscriptionStatus.ACTIVE)
         resp = _client(user).post(CHANGE_URL, {}, format="json")
         assert resp.status_code == 400
-        assert resp.json()["error"]["code"] == "invalid_request"
+        assert resp.json()["error"]["code"] == "invalid_plan"
+        assert resp.json()["error"]["message"] == polar_billing.INVALID_PLAN
 
     @polar_configured
     def test_canceled_subscription_cannot_switch(self):

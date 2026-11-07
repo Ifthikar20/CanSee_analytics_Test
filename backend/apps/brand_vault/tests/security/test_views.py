@@ -6,12 +6,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.accounts.tests.factories import UserFactory
-from apps.brand_vault.models import (
-    BrandSecurityAgent,
-    BrandSecurityConfig,
-    SafetyAlert,
-    SafetyPrompt,
-)
+from apps.brand_vault.models import BrandSecurityConfig, SafetyAlert
 from apps.websites.tests.factories import WebsiteFactory
 
 pytestmark = pytest.mark.django_db
@@ -53,65 +48,30 @@ class TestOverview:
         _make_alert(website, severity="high")
         _make_alert(website, severity="medium",
                     agent_id="serp_reputation", source=SafetyAlert.SOURCE_SERP)
-        SafetyPrompt.objects.create(website=website, text="Is Acme legit?")
 
         resp = client.get(reverse("brand-security-overview", args=[website.id]))
         assert resp.status_code == 200
         body = resp.data
+        # A finding exists, so stored answers have been checked.
+        assert body["scan_status"] == "scanned"
         assert body["open_alerts"] == 2
         assert body["by_severity"]["high"] == 1
         assert body["by_severity"]["medium"] == 1
         # Health = 100 - (10*1 + 4*1) = 86
         assert body["health_score"] == 86
-        assert body["prompts_monitored"] == 1
-        assert body["by_agent"]["llm_truth"] == 1
-        assert body["by_agent"]["serp_reputation"] == 1
+        assert body["by_source"] == {
+            SafetyAlert.SOURCE_LLM: 1, SafetyAlert.SOURCE_SERP: 1,
+        }
 
-
-class TestAgentsList:
-    def test_seeds_agent_rows_on_first_call(self, auth):
+    def test_health_is_null_until_answers_are_checked(self, auth):
+        # No audit, no sweep and no finding yet: no score, not a clean 100.
         client, user = auth
         website = WebsiteFactory(user=user)
-        assert BrandSecurityAgent.objects.filter(website=website).count() == 0
-        resp = client.get(reverse("brand-security-agents", args=[website.id]))
+        resp = client.get(reverse("brand-security-overview", args=[website.id]))
         assert resp.status_code == 200
-        assert len(resp.data) == 5  # 5 v1 agents
-        names = {row["agent_id"] for row in resp.data}
-        assert "llm_truth" in names
-        assert "narrative_watch" in names
-        assert BrandSecurityAgent.objects.filter(website=website).count() == 5
-
-    def test_reports_open_alert_counts_per_agent(self, auth):
-        client, user = auth
-        website = WebsiteFactory(user=user)
-        _make_alert(website, agent_id="llm_truth", severity="high")
-        _make_alert(website, agent_id="llm_truth", severity="low",
-                    title="Different")
-
-        resp = client.get(reverse("brand-security-agents", args=[website.id]))
-        row = next(r for r in resp.data if r["agent_id"] == "llm_truth")
-        assert row["open_alerts"] == 2
-        assert row["open_high"] == 1
-        assert row["open_low"] == 1
-
-
-class TestAgentPatchAndRun:
-    def test_patch_updates_sensitivity(self, auth):
-        client, user = auth
-        website = WebsiteFactory(user=user)
-        BrandSecurityAgent.objects.create(
-            website=website, agent_id="llm_truth", sensitivity="medium",
-        )
-        url = reverse(
-            "brand-security-agent-detail",
-            kwargs={"website_id": website.id, "agent_id": "llm_truth"},
-        )
-        resp = client.patch(url, {"sensitivity": "high", "enabled": False}, format="json")
-        assert resp.status_code == 200
-        row = BrandSecurityAgent.objects.get(website=website, agent_id="llm_truth")
-        assert row.sensitivity == "high"
-        assert row.enabled is False
-
+        assert resp.data["health_score"] is None
+        assert resp.data["scan_status"] == "not_scanned"
+        assert resp.data["open_alerts"] == 0
 
 
 class TestAlerts:
@@ -157,10 +117,10 @@ class TestConfig:
         url = reverse("brand-security-config", args=[website.id])
         resp = client.put(
             url,
-            {"brand_terms": ["Acme", "acme.io"], "negative_keywords": ["scam"]},
+            {"brand_terms": ["Acme", "acme.io"], "llm_judge_enabled": False},
             format="json",
         )
         assert resp.status_code == 200
         cfg = BrandSecurityConfig.objects.get(website=website)
         assert cfg.brand_terms == ["Acme", "acme.io"]
-        assert cfg.negative_keywords == ["scam"]
+        assert cfg.llm_judge_enabled is False
