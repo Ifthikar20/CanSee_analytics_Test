@@ -9,6 +9,7 @@ External boundaries are controlled two ways:
     - The LLM helpers key off ``settings.ANTHROPIC_API_KEY``. base.py's
       read_env loads the developer's real .env, so the autouse fixture
       blanks the key to guarantee the suite never reaches the network.
+    - The logo crawler is patched at its source module for the same reason.
 """
 from unittest.mock import patch
 
@@ -18,6 +19,7 @@ from apps.onboarding.services import onboarding_service
 from apps.onboarding.services.onboarding_service import run_onboarding_scan
 
 SCAN_DOMAIN = "apps.llm_ranking.services.domain_scanner.scan_domain"
+FETCH_LOGO = "apps.prompt_library.services.logo_crawler.fetch_site_logo"
 
 _HEALTHY_SCAN = {
     "success": True,
@@ -35,6 +37,13 @@ _HEALTHY_SCAN = {
 @pytest.fixture(autouse=True)
 def _no_llm(settings):
     settings.ANTHROPIC_API_KEY = ""
+
+
+@pytest.fixture(autouse=True)
+def _no_logo_crawl():
+    # The logo crawler fetches the homepage; keep the suite offline.
+    with patch(FETCH_LOGO, return_value=""):
+        yield
 
 
 class TestRunOnboardingScan:

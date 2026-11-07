@@ -74,6 +74,10 @@ class TestScanEndpoint:
         assert body["success"] is True
         assert body["business_name"] == "Acme"
         assert len(body["competitors"]) == 1
+        # Brand profile + logo fields are always present ("" when unknown).
+        assert body["audience"] == ""
+        assert body["voice"] == ""
+        assert body["logo_url"] == ""
 
 
 @pytest.mark.django_db
