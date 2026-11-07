@@ -51,9 +51,19 @@ def test_legacy_plaintext_without_marker_read_as_is():
 @override_settings(FIELD_ENCRYPTION_KEY="", FIELD_ENCRYPTION_REQUIRED=False)
 def test_dev_without_key_passes_through_plaintext_and_warns(caplog):
     field_encryption._warned_no_key = False  # reset one-time guard
-    f = _field()
-    assert f.get_prep_value("dev-value") == "dev-value"
-    assert any("PLAINTEXT" in r.message for r in caplog.records)
+    # The "apps" logger does not propagate to the root logger (LOGGING in
+    # config/settings/base.py), so caplog's root handler would never see the
+    # record. Attach the handler to the module's logger directly.
+    field_encryption.logger.addHandler(caplog.handler)
+    try:
+        f = _field()
+        assert f.get_prep_value("dev-value") == "dev-value"
+    finally:
+        field_encryption.logger.removeHandler(caplog.handler)
+    assert any(
+        r.levelname == "WARNING" and "PLAINTEXT" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 class TestSystemCheck:

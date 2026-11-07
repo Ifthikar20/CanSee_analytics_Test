@@ -95,7 +95,13 @@ class TestPlaintextConfig:
 class TestBothConfigsStayInSync:
     @pytest.mark.parametrize(
         "location",
-        ["/static/", "/health/", "/admin/", "/api/", "/ws/", "= /p.js", "/pixel/"],
+        [
+            "/static/", "/health/", "/api/", "^~ /api/v1/agent/live/", "= /p.js", "/pixel/",
+            # Django admin is proxied only at the unguessable ADMIN_URL path;
+            # a plain /admin/ falls through to the SPA. There is no /ws/:
+            # websockets were removed from the app.
+            "/ops-ed4aaf863d969e541d/",
+        ],
     )
     def test_every_route_exists_in_both(self, location):
         # A route added to one and forgotten in the other is the drift this

@@ -41,20 +41,20 @@ def _big_page(size: int) -> bytes:
 
 @pytest.fixture(autouse=True)
 def _allow_url():
-    with patch("core.validators.safe_http.assert_url_safe", side_effect=lambda u: u):
+    with patch("core.validators.safe_http.assert_url_safe", side_effect=lambda u, **kwargs: u):
         yield
 
 
 class TestTruncate:
     def test_oversize_body_raises_by_default(self):
         resp = _FakeResp(_big_page(200_000))
-        with patch("requests.get", return_value=resp):
+        with patch("requests.Session.get", return_value=resp):
             with pytest.raises(FetchError, match="exceeds"):
                 safe_get("https://example.com", max_bytes=50_000)
 
     def test_truncate_returns_prefix_instead_of_raising(self):
         resp = _FakeResp(_big_page(200_000))
-        with patch("requests.get", return_value=resp):
+        with patch("requests.Session.get", return_value=resp):
             out = safe_get("https://example.com", max_bytes=50_000, truncate=True)
         assert out.status_code == 200
         # Capped, and the head (what the scanner actually reads) survives.
@@ -64,7 +64,7 @@ class TestTruncate:
 
     def test_truncate_leaves_small_pages_whole(self):
         body = b"<html><head><title>Tiny</title></head><body>ok</body></html>"
-        with patch("requests.get", return_value=_FakeResp(body)):
+        with patch("requests.Session.get", return_value=_FakeResp(body)):
             out = safe_get("https://example.com", max_bytes=DEFAULT_MAX_BYTES,
                            truncate=True)
         assert out.text == body.decode()

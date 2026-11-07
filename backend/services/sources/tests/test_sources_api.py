@@ -1,5 +1,7 @@
 """HTTP surface of the sources service (auth, search mapping, read dispatch)."""
 
+import json
+import socket
 from unittest.mock import MagicMock, patch
 
 import requests
@@ -82,12 +84,25 @@ def test_read_dispatches_reddit(monkeypatch):
             {"kind": "t1", "data": {"body": "Starship.", "score": 42, "replies": ""}},
         ]}},
     ]
-    with patch.object(requests, "get", return_value=_resp(reddit_payload)):
+    # The thread is fetched through safe_get (SSRF guard, streamed body,
+    # content-type allowlist), which sends each hop on its own
+    # requests.Session. Mock DNS to a public address and the transport at
+    # Session.get with a streamed JSON response.
+    raw = json.dumps(reddit_payload).encode()
+    streamed = MagicMock()
+    streamed.status_code = 200
+    streamed.headers = {"Content-Type": "application/json; charset=UTF-8"}
+    streamed.iter_content = lambda chunk_size=8192: [raw]
+    streamed.text = raw.decode()
+    public = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("151.101.1.140", 0))]
+    with patch("services.sources.url_safety.socket.getaddrinfo", return_value=public), \
+         patch.object(requests.Session, "get", return_value=streamed) as get:
         resp = client.post(
             "/v1/read",
             json={"url": "https://www.reddit.com/r/Dallas/comments/abc/best/"},
             headers=_auth(),
         )
+    assert get.call_args.args[0] == "https://www.reddit.com/r/Dallas/comments/abc/best.json"
     body = resp.json()
     assert body["status"] == "ok"
     assert body["kind"] == "reddit"
