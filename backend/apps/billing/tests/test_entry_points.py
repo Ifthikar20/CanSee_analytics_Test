@@ -110,6 +110,40 @@ def test_scan_false_tracks_without_a_scan(user, website, monkeypatch):
     assert BrandPrompt.objects.filter(website=website, prompt__text="best crm for florists").exists()
 
 
+def test_create_counts_re_adding_an_archived_prompt(user, website, monkeypatch):
+    # The create view un-archives a re-added prompt, so at the cap it must
+    # refuse just as restoring through the archive toggle does.
+    monkeypatch.setattr(
+        "apps.prompt_library.api.v1.views.WebsitePromptCreateView._trigger_scan",
+        staticmethod(lambda *a, **k: ("audit-id", None)),
+    )
+    track(website, 5)
+    (archived,) = track(website, 1, archived=True)
+    resp = client_for(user).post(_create_url(website), {
+        "text": archived.prompt.text, "scan": False,
+    }, format="json")
+    _refused(resp, adding=1)
+    archived.refresh_from_db()
+    assert archived.is_archived is True
+    assert _active(website) == 5
+
+
+def test_create_re_adds_an_archived_prompt_within_the_cap(user, website, monkeypatch):
+    monkeypatch.setattr(
+        "apps.prompt_library.api.v1.views.WebsitePromptCreateView._trigger_scan",
+        staticmethod(lambda *a, **k: ("audit-id", None)),
+    )
+    track(website, 4)
+    (archived,) = track(website, 1, archived=True)
+    resp = client_for(user).post(_create_url(website), {
+        "text": archived.prompt.text, "scan": False,
+    }, format="json")
+    assert resp.status_code == 201, resp.content
+    archived.refresh_from_db()
+    assert archived.is_archived is False
+    assert _active(website) == 5
+
+
 # -- archive and restore ------------------------------------------------------------------
 
 
