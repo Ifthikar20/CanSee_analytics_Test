@@ -25,7 +25,7 @@ vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
 const app = { setWebsites: vi.fn() }
 vi.mock('@/stores/app', () => ({ useAppStore: () => app }))
 
-const { firstResearchText, provideOnboardingFlow, SCAN_SETTLE_MS } = await import('../useOnboardingFlow')
+const { firstResearchText, LIMITS, provideOnboardingFlow, SCAN_SETTLE_MS, webUrl } = await import('../useOnboardingFlow')
 const { default: RunStep } = await import('../steps/RunStep.vue')
 const { default: WebsiteStep } = await import('../steps/WebsiteStep.vue')
 const { default: BrandStep } = await import('../steps/BrandStep.vue')
@@ -42,6 +42,11 @@ const SCAN = {
   description_short: 'Notion is one workspace for docs, wikis and projects.',
   description_raw: 'The connected workspace.',
   products: ['Docs', 'Wikis', 'Projects', 'docs'],
+  // The homepage does not say who it sells to or how it sounds: the scan
+  // leaves both empty rather than guess, and finds no logo.
+  audience: '',
+  voice: '',
+  logo_url: '',
   features: [],
   selling_points: [],
   topics: [
@@ -95,9 +100,9 @@ function host(child = null, onComplete = vi.fn()) {
   return { flow, wrapper, onComplete }
 }
 
-async function scanned(child = null) {
+async function scanned(child = null, scan = {}) {
   post.mockImplementation((url) =>
-    url === '/onboarding/scan/' ? Promise.resolve({ data: { ...SCAN } }) : Promise.resolve({ data: {} }),
+    url === '/onboarding/scan/' ? Promise.resolve({ data: { ...SCAN, ...scan } }) : Promise.resolve({ data: {} }),
   )
   const ctx = host(child)
   ctx.flow.urlInput.value = 'notion.so'
@@ -108,9 +113,9 @@ async function scanned(child = null) {
 }
 
 /** A flow at the last step with a reviewed form and the agent's status. */
-async function atRunStep({ status = STATUS, child = null } = {}) {
+async function atRunStep({ status = STATUS, child = null, scan = {} } = {}) {
   agentApi.status.mockResolvedValue({ data: status })
-  const ctx = await scanned(child)
+  const ctx = await scanned(child, scan)
   const { flow } = ctx
   flow.form.value.audience = 'Operations leads at 50 to 500 person companies'
   flow.form.value.voice = 'Plain, confident, no jargon'
@@ -134,6 +139,8 @@ function finishMocks({ entries = 0, suggested = 0 } = {}) {
 beforeEach(() => {
   vi.useFakeTimers()
   sessionStorage.clear()
+  // BrandLogo caches resolved logos here.
+  localStorage.clear()
   post.mockReset()
   get.mockReset()
   push.mockReset()
@@ -149,6 +156,7 @@ afterEach(() => {
   while (mounted.length) mounted.pop().unmount()
   document.body.innerHTML = ''
   vi.useRealTimers()
+  vi.unstubAllGlobals()
 })
 
 describe('onboarding: website and scan', () => {
@@ -178,7 +186,8 @@ describe('onboarding: website and scan', () => {
     expect(form.prompts.filter((p) => p.selected).map((p) => p.text)).toEqual(SCAN.topics.slice(0, 3))
     expect(form.prompts).toHaveLength(6)
     expect(form.location).toBe('us')
-    expect(form.scan).toEqual({ products: 3, topics: 6, competitors: 6, topics_source: 'ai', missing_keys: [] })
+    expect(form.logo_url).toBe('')
+    expect(form.scan).toEqual({ products: 3, topics: 6, competitors: 6, audience: false, topics_source: 'ai', missing_keys: [] })
 
     // The rows resolve from the data; the brand step follows a moment later.
     expect(flow.scanState.value).toBe('resolved')
@@ -207,6 +216,57 @@ describe('onboarding: website and scan', () => {
     ])
     expect(flow.form.value.scan.topics_source).toBe('unavailable')
     expect(flow.form.value.scan.missing_keys).toEqual(['ANTHROPIC_API_KEY'])
+  })
+
+  it('takes the audience, voice and logo the page itself gave, clipped to the field caps', async () => {
+    post.mockResolvedValue({
+      data: {
+        ...SCAN,
+        audience: `  Teams that write ${'docs '.repeat(200)}`,
+        voice: '  Calm and clear.  ',
+        logo_url: ' https://notion.so/apple-touch-icon.png ',
+      },
+    })
+    const { flow } = host()
+    flow.urlInput.value = 'notion.so'
+    await flow.startScan()
+
+    const form = flow.form.value
+    expect(form.audience.startsWith('Teams that write docs docs')).toBe(true)
+    expect(form.audience.length).toBeLessThanOrEqual(LIMITS.audience)
+    expect(form.voice).toBe('Calm and clear.')
+    expect(form.logo_url).toBe('https://notion.so/apple-touch-icon.png')
+    expect(form.scan.audience).toBe(true)
+  })
+
+  it('leaves audience, voice and logo empty when the scan has nothing usable for them', async () => {
+    post.mockResolvedValue({
+      data: { ...SCAN, audience: '   ', voice: { tone: 'friendly' }, logo_url: 'javascript:alert(1)' },
+    })
+    const { flow } = host()
+    flow.urlInput.value = 'notion.so'
+    await flow.startScan()
+    expect(flow.form.value.audience).toBe('')
+    expect(flow.form.value.voice).toBe('')
+    expect(flow.form.value.logo_url).toBe('')
+    expect(flow.form.value.scan.audience).toBe(false)
+
+    // An older scan payload without the fields at all.
+    const { audience, voice, logo_url, ...older } = SCAN
+    expect([audience, voice, logo_url]).toEqual(['', '', ''])
+    post.mockResolvedValue({ data: older })
+    flow.urlInput.value = 'notion.com'
+    await flow.startScan()
+    expect([flow.form.value.audience, flow.form.value.voice, flow.form.value.logo_url]).toEqual(['', '', ''])
+  })
+
+  it('keeps only http(s) logo addresses', () => {
+    expect(webUrl('https://a.com/logo.png')).toBe('https://a.com/logo.png')
+    expect(webUrl(' http://a.com/favicon.ico ')).toBe('http://a.com/favicon.ico')
+    expect(webUrl('data:image/png;base64,AAAA')).toBe('')
+    expect(webUrl('//a.com/logo.png')).toBe('')
+    expect(webUrl('/logo.png')).toBe('')
+    expect(webUrl(null)).toBe('')
   })
 
   it('shows the scanner failure and fills in by hand from the address alone', async () => {
@@ -379,6 +439,78 @@ describe('onboarding: review steps', () => {
 
     await wrapper.findAll('button').find((b) => b.text() === 'Change').trigger('click')
     expect(flow.step.value).toBe(0)
+  })
+
+  it('fills who you sell to and voice from the scan and stops calling them missing', async () => {
+    const { flow, wrapper } = await scanned(BrandStep, {
+      audience: 'Teams that outgrow scattered docs',
+      voice: 'Calm and clear',
+    })
+    const missing = () =>
+      wrapper.findAll('.ob-label-row').filter((r) => r.find('.ob-missing').exists()).map((r) => r.find('.ob-label').text())
+    expect(missing()).toEqual([])
+    expect(wrapper.find('#ob-brand-audience').element.value).toBe('Teams that outgrow scattered docs')
+    expect(wrapper.find('#ob-brand-voice').element.value).toBe('Calm and clear')
+    // The page said who it sells to, so the step does not claim it could not tell.
+    expect(wrapper.find('#ob-brand-audience-hint').exists()).toBe(false)
+    expect(wrapper.find('#ob-brand-audience').attributes('aria-describedby')).toBeUndefined()
+
+    // Emptied by the user, the field is missing again; the hint stays as it was.
+    await wrapper.find('#ob-brand-audience').setValue('')
+    expect(missing()).toEqual(['Who you sell to'])
+    expect(flow.form.value.audience).toBe('')
+  })
+
+  it("shows the scan's logo beside the brand name, then the site's own, then the initial", async () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    get.mockResolvedValue({ data: { domain: 'notion.so', logo: 'https://notion.so/favicon.ico' } })
+    const { wrapper } = await scanned(BrandStep, { logo_url: 'https://notion.so/apple-touch-icon.png' })
+    const logo = () => wrapper.find('.ob-name-row .ob-brand-logo')
+
+    expect(logo().find('img').attributes('src')).toBe('https://notion.so/apple-touch-icon.png')
+    expect(logo().find('img').attributes('alt')).toBe('')
+    expect(get).not.toHaveBeenCalled()
+
+    // The scan's logo does not load: the site's own logo, crawled from its domain.
+    await logo().find('img').trigger('error')
+    await flushPromises()
+    expect(get).toHaveBeenCalledWith('/prompt-library/logo/', { params: { domain: 'notion.so' }, _silentError: true })
+    expect(logo().find('img').attributes('src')).toBe('https://notion.so/favicon.ico')
+
+    // That one does not load either: the brand's initial, never a logo guessed by name.
+    await logo().find('img').trigger('error')
+    await flushPromises()
+    expect(logo().find('img').exists()).toBe(false)
+    expect(logo().find('.brand-logo-badge').text()).toBe('N')
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(get).toHaveBeenCalledTimes(1)
+  })
+
+  it('looks the logo up from the website when the scan found none, and falls back to the initial', async () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    get.mockResolvedValue({ data: { domain: 'notion.so', logo: '' } })
+    const { flow, wrapper } = await scanned(BrandStep)
+    await flushPromises()
+    const logo = () => wrapper.find('.ob-name-row .ob-brand-logo')
+
+    expect(get).toHaveBeenCalledWith('/prompt-library/logo/', { params: { domain: 'notion.so' }, _silentError: true })
+    expect(logo().find('img').exists()).toBe(false)
+    expect(logo().find('.brand-logo-badge').text()).toBe('N')
+    expect(fetchSpy).not.toHaveBeenCalled()
+
+    // Renaming the brand changes the initial without looking the logo up again.
+    await wrapper.find('#ob-brand-name').setValue('Acme')
+    await flushPromises()
+    expect(logo().find('.brand-logo-badge').text()).toBe('A')
+    expect(get).toHaveBeenCalledTimes(1)
+    expect(fetchSpy).not.toHaveBeenCalled()
+
+    // With the name emptied, the badge takes the website's initial.
+    await wrapper.find('#ob-brand-name').setValue('')
+    expect(logo().find('.brand-logo-badge').text()).toBe('N')
+    expect(flow.form.value.logo_url).toBe('')
   })
 
   it('locks the other competitors at five and offers to skip when none is kept', async () => {
@@ -594,6 +726,16 @@ describe('onboarding: first research', () => {
     await flow.startResearch()
     expect(toast.error).not.toHaveBeenCalled()
     expect(push).toHaveBeenCalledWith(expect.objectContaining({ name: 'agent-home' }))
+  })
+
+  it('never sends the logo: the save endpoint takes none', async () => {
+    const { flow } = await atRunStep({ scan: { logo_url: 'https://notion.so/apple-touch-icon.png' } })
+    expect(flow.form.value.logo_url).toBe('https://notion.so/apple-touch-icon.png')
+    finishMocks()
+    await flow.skipResearch()
+    const [url, body] = post.mock.calls[0]
+    expect(url).toBe('/onboarding/save/')
+    expect(Object.keys(body).sort()).toEqual(['business_name', 'competitors', 'description', 'industry', 'keywords', 'url'])
   })
 
   it('clips the project topics to what the save endpoint takes', async () => {
