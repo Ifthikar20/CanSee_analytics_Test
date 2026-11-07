@@ -14,6 +14,12 @@ import pytest
 from apps.accounts.tests.factories import UserFactory
 from apps.rag.models import KnowledgeChunk, KnowledgeSource
 from apps.rag.services import ingest_service
+from apps.rag.services.embedder import (
+    OPENAI_DIM,
+    OPENAI_MODEL,
+    PENDING_MODEL,
+    REASON_NOT_CONFIGURED,
+)
 from apps.websites.tests.factories import WebsiteFactory
 
 
@@ -28,9 +34,10 @@ def _fake_scan(text: str, business_name: str = "Example"):
 
 
 @pytest.fixture
-def no_openai(settings):
-    """Force the deterministic-fallback embedder."""
-    settings.OPENAI_API_KEY = ""
+def no_openai(fake_openai_embeddings):
+    """Offline embeddings: the conftest fake OpenAI client (the word-hash
+    fallback embedder was removed in 3320cdf)."""
+    return fake_openai_embeddings
 
 
 @pytest.fixture
@@ -62,6 +69,35 @@ class TestIngestURL:
         chunks = list(KnowledgeChunk.objects.filter(source=source))
         assert len(chunks) == source.chunk_count
         assert all(c.embedding for c in chunks)
+        assert all(c.embedding_model == OPENAI_MODEL for c in chunks)
+        assert all(c.embedding_dim == OPENAI_DIM for c in chunks)
+        assert result.embeddings_pending is False
+        assert result.embedding_reason == ""
+
+    def test_without_key_stores_chunks_pending(self, settings, user_and_website):
+        # 3320cdf: no stand-in vectors. The text is kept, the chunks carry
+        # no vector and are marked pending, and the result says why.
+        settings.OPENAI_API_KEY = ""
+        user, website = user_and_website
+        with patch.object(
+            ingest_service, "scan_domain",
+            return_value=_fake_scan("Cansee is an analytics platform " * 80),
+        ):
+            result = ingest_service.ingest_url(
+                user=user, website=website,
+                url="https://example.com",
+                kind=KnowledgeSource.KIND_HOMEPAGE,
+            )
+        assert result.status == KnowledgeSource.STATUS_READY
+        assert result.chunk_count > 0
+        assert result.embeddings_pending is True
+        assert result.embedding_reason == REASON_NOT_CONFIGURED
+        chunks = list(KnowledgeChunk.objects.filter(source_id=result.source_id))
+        assert len(chunks) == result.chunk_count
+        assert all(c.text for c in chunks)
+        assert all(c.embedding == [] for c in chunks)
+        assert all(c.embedding_model == PENDING_MODEL for c in chunks)
+        assert all(c.embedding_dim == 0 for c in chunks)
 
     def test_short_circuits_when_content_unchanged(
         self, no_openai, user_and_website,

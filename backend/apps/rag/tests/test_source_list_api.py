@@ -2,13 +2,16 @@
 Contract tests for the paginated + filterable Knowledge Source list view.
 
 The Brand Input page depends on:
-- ``stats`` counts scoped to the whole (user, website) corpus, not
-  the current filter (badges must not double-narrow when the user
-  clicks one).
+- ``stats`` counts scoped to the whole website corpus, not the current
+  filter (badges must not double-narrow when the user clicks one), plus
+  ``chunks_pending`` (chunks still waiting for a vector, added in
+  3320cdf).
 - ``status``, ``kind``, ``domain``, and ``search`` filters composing.
 - Standard DRF pagination envelope alongside ``stats``.
-- Cross-tenant isolation — a user filtering by ``domain=example.com``
-  must never see another user's rows for the same host.
+- Cross-tenant isolation — the knowledge base is shared per website
+  (a71db88), so a user filtering by ``domain=example.com`` sees every
+  teammate's rows on the website but never another website's rows for
+  the same host.
 """
 import pytest
 from rest_framework.test import APIClient
@@ -46,7 +49,7 @@ def website(user):
 
 @pytest.mark.django_db
 class TestSourceListStats:
-    """`stats` must count the whole (user, website) corpus, not the filter."""
+    """`stats` must count the whole website corpus, not the filter."""
 
     def _url(self, website):
         return f"/api/v1/rag/{website.id}/sources/"
@@ -75,12 +78,13 @@ class TestSourceListStats:
         # display accurate totals.
         assert body["meta"]["stats"] == {
             "total": 4, "ready": 2, "ingesting": 0, "pending": 1, "failed": 1,
+            "chunks_pending": 0,
         }
 
 
 @pytest.mark.django_db
 class TestSourceListFilters:
-    """Filter params compose and are cross-user isolated."""
+    """Filter params compose and are cross-website isolated."""
 
     def _url(self, website):
         return f"/api/v1/rag/{website.id}/sources/"
@@ -155,14 +159,18 @@ class TestSourceListFilters:
         rows = r.json()["data"]
         assert [row["kind"] for row in rows] == ["docs"]
 
-    def test_other_users_rows_never_leak_via_domain_filter(
+    def test_other_websites_rows_never_leak_via_domain_filter(
         self, client, user, website,
     ):
-        # Same host, different owner — critical isolation guarantee.
-        other = UserFactory()
-        _make(other, website, "https://example.com/secret",
+        # Same host, different website (and owner) — critical isolation
+        # guarantee.
+        other_site = WebsiteFactory()
+        _make(other_site.user, other_site, "https://example.com/secret",
               status=KnowledgeSource.STATUS_READY,
-              title="OTHER USER PRIVATE")
+              title="OTHER WEBSITE PRIVATE")
+        # The caller's own second project is a separate corpus too.
+        _make(user, WebsiteFactory(user=user), "https://example.com/elsewhere",
+              status=KnowledgeSource.STATUS_READY)
         _make(user, website, "https://example.com/mine",
               status=KnowledgeSource.STATUS_READY)
 
@@ -170,6 +178,25 @@ class TestSourceListFilters:
         r = client.get(self._url(website), {"domain": "example.com"})
         rows = r.json()["data"]
         assert [row["url"] for row in rows] == ["https://example.com/mine"]
+
+    def test_teammates_rows_on_same_website_are_listed(
+        self, client, user, website,
+    ):
+        # The knowledge base belongs to the project: a source added by
+        # another user on this website is part of the same corpus.
+        teammate = UserFactory()
+        _make(teammate, website, "https://example.com/shared",
+              status=KnowledgeSource.STATUS_READY)
+        _make(user, website, "https://example.com/mine",
+              status=KnowledgeSource.STATUS_READY)
+
+        client.force_authenticate(user=user)
+        r = client.get(self._url(website), {"domain": "example.com"})
+        rows = r.json()["data"]
+        assert {row["url"] for row in rows} == {
+            "https://example.com/shared", "https://example.com/mine",
+        }
+        assert r.json()["meta"]["stats"]["total"] == 2
 
 
 @pytest.mark.django_db

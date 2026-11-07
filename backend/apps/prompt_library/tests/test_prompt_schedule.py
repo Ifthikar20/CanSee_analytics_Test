@@ -152,6 +152,23 @@ def test_cannot_schedule_on_another_users_website(auth):
 # ── Dispatcher ──────────────────────────────────────────────────────────────
 
 
+@pytest.fixture
+def engines_configured():
+    """One AI engine key configured, SerpAPI not.
+
+    Since 3320cdf the dispatcher returns early when neither an AI engine
+    nor SerpAPI is configured (a crawl could only record failures), so
+    the dispatcher tests configure one engine."""
+    with patch(
+        "apps.llm_ranking.services.audit_factory.configured_providers",
+        return_value=["claude"],
+    ), patch(
+        "apps.citations.services.serp_google.is_configured",
+        return_value=False,
+    ):
+        yield
+
+
 def _due_schedule(website, prompt, user, **kwargs):
     bp = _save(website, prompt)
     defaults = dict(
@@ -166,7 +183,7 @@ def _due_schedule(website, prompt, user, **kwargs):
 
 
 @pytest.mark.django_db
-def test_due_schedule_enqueues_and_advances():
+def test_due_schedule_enqueues_and_advances(engines_configured):
     website = WebsiteFactory()
     prompt = PromptFactory()
     sched = _due_schedule(website, prompt, website.user)
@@ -184,7 +201,7 @@ def test_due_schedule_enqueues_and_advances():
 
 
 @pytest.mark.django_db
-def test_not_due_schedule_untouched():
+def test_not_due_schedule_untouched(engines_configured):
     website = WebsiteFactory()
     prompt = PromptFactory()
     future = timezone.now() + timedelta(days=1)
@@ -201,7 +218,7 @@ def test_not_due_schedule_untouched():
 
 
 @pytest.mark.django_db
-def test_disabled_schedule_ignored():
+def test_disabled_schedule_ignored(engines_configured):
     website = WebsiteFactory()
     prompt = PromptFactory()
     _due_schedule(website, prompt, website.user, is_enabled=False)
@@ -215,7 +232,7 @@ def test_disabled_schedule_ignored():
 
 
 @pytest.mark.django_db
-def test_over_cap_skips_and_bumps():
+def test_over_cap_skips_and_bumps(engines_configured):
     website = WebsiteFactory()
     prompt = PromptFactory()
     sched = _due_schedule(website, prompt, website.user)
@@ -232,7 +249,7 @@ def test_over_cap_skips_and_bumps():
 
 
 @pytest.mark.django_db
-def test_in_flight_crawl_skips():
+def test_in_flight_crawl_skips(engines_configured):
     website = WebsiteFactory()
     prompt = PromptFactory()
     sched = _due_schedule(website, prompt, website.user)
@@ -253,7 +270,7 @@ def test_in_flight_crawl_skips():
 
 
 @pytest.mark.django_db
-def test_dispatch_failure_autopauses():
+def test_dispatch_failure_autopauses(engines_configured):
     website = WebsiteFactory()
     prompt = PromptFactory()
     sched = _due_schedule(website, prompt, website.user, auto_pause_threshold=1)
@@ -267,6 +284,35 @@ def test_dispatch_failure_autopauses():
     sched.refresh_from_db()
     assert sched.consecutive_failures == 1
     assert sched.is_enabled is False  # auto-paused at threshold
+
+
+@pytest.mark.django_db
+def test_nothing_dispatched_without_engine_or_serpapi_key():
+    """3320cdf: with no AI engine key and no SerpAPI key a scheduled run
+    could only record failures, so the dispatcher skips the whole cycle
+    and leaves every schedule due."""
+    website = WebsiteFactory()
+    prompt = PromptFactory()
+    sched = _due_schedule(website, prompt, website.user)
+    due_at = sched.next_run_at
+
+    with patch(
+        "apps.llm_ranking.services.audit_factory.configured_providers",
+        return_value=[],
+    ), patch(
+        "apps.citations.services.serp_google.is_configured",
+        return_value=False,
+    ), patch(
+        "apps.prompt_library.tasks.crawl_prompt_for_website"
+    ) as crawl, patch("apps.search_gap.tasks.check_google_rank") as google:
+        dispatch_scheduled_prompt_scans()
+
+    crawl.delay.assert_not_called()
+    google.delay.assert_not_called()
+    sched.refresh_from_db()
+    assert sched.next_run_at == due_at
+    assert sched.last_run_at is None
+    assert sched.consecutive_failures == 0
 
 
 @pytest.mark.django_db
@@ -567,7 +613,7 @@ def test_dashboard_last_run_from_results(auth):
 
 
 @pytest.mark.django_db
-def test_archived_prompt_schedule_is_not_dispatched():
+def test_archived_prompt_schedule_is_not_dispatched(engines_configured):
     website = WebsiteFactory()
     prompt = PromptFactory()
     sched = _due_schedule(website, prompt, website.user)
@@ -589,7 +635,7 @@ def test_archived_prompt_schedule_is_not_dispatched():
 
 
 @pytest.mark.django_db
-def test_unarchived_prompt_schedule_resumes():
+def test_unarchived_prompt_schedule_resumes(engines_configured):
     website = WebsiteFactory()
     prompt = PromptFactory()
     sched = _due_schedule(website, prompt, website.user)

@@ -1,10 +1,16 @@
 """Sample prompts must be built from what the site actually is — never the
-old generic "software" default for a non-software business."""
+old generic "software" default for a non-software business.
+
+Since 3320cdf the scan's findings are used for the request only (never
+saved onto the website), the template fallback is gone, and a missing
+Claude key raises SynthesisNotConfigured before anything is read.
+"""
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from apps.prompt_library.services.context_generator import SynthesisNotConfigured
 from apps.prompt_library.services.sample_prompts import build_sample_prompts
 from apps.websites.tests.factories import WebsiteFactory
 
@@ -18,31 +24,49 @@ CAR_SCAN = {
 }
 
 
+CAR_QUESTIONS = [
+    "What's the best way to get alerts on used car price drops?",
+    "How do I find the cheapest deals on used cars near me?",
+]
+
+
 def _unconfigured_llm():
-    """ClaudeUtility stub with no API key → forces the template fallback."""
+    """ClaudeUtility stub with no API key."""
     fake = MagicMock()
     fake.is_configured.return_value = False
     return fake
 
 
+def _configured_llm(questions=CAR_QUESTIONS):
+    fake = MagicMock()
+    fake.is_configured.return_value = True
+    fake.query.return_value = MagicMock(succeeded=True, text=json.dumps(questions))
+    return fake
+
+
 class TestScanFirst:
-    def test_blank_site_is_scanned_and_persisted(self):
+    def test_blank_site_is_scanned_but_not_persisted(self):
         website = WebsiteFactory(
             name="Car Signal", industry="", description="",
             url="https://trycarsignal.com/",
         )
+        fake = _configured_llm()
         with patch("apps.llm_ranking.services.domain_scanner.scan_domain", return_value=CAR_SCAN), \
-             patch("apps.prompt_library.services.sample_prompts.ClaudeUtility", return_value=_unconfigured_llm()):
+             patch("apps.prompt_library.services.sample_prompts.ClaudeUtility", return_value=fake):
             result = build_sample_prompts(website, count=6, user=website.user)
 
+        # The scan grounds this request only; the website is left as it was.
         website.refresh_from_db()
-        assert website.industry == "automotive"
-        assert "used cars" in website.description
-        # Template fallback fired (LLM unconfigured), but with the REAL industry.
-        assert result["source"] == "template"
-        joined = " ".join(i["text"].lower() for i in result["items"])
-        assert "software" not in joined
-        assert "automotive" in joined
+        assert website.industry == ""
+        assert website.description == ""
+        # The REAL industry and description reach the model.
+        assert result["source"] == "llm"
+        assert result["industry"] == "automotive"
+        sent = fake.query.call_args.args[0]
+        assert "Category: automotive" in sent
+        assert "used cars" in sent
+        assert "car price alerts" in sent
+        assert [i["text"] for i in result["items"]] == CAR_QUESTIONS
 
     def test_already_classified_skips_scan(self):
         website = WebsiteFactory(
@@ -50,7 +74,18 @@ class TestScanFirst:
             description="Used-car deal alerts.", url="https://trycarsignal.com/",
         )
         with patch("apps.llm_ranking.services.domain_scanner.scan_domain") as scan, \
-             patch("apps.prompt_library.services.sample_prompts.ClaudeUtility", return_value=_unconfigured_llm()):
+             patch("apps.prompt_library.services.sample_prompts.ClaudeUtility", return_value=_configured_llm()):
+            build_sample_prompts(website, count=4, user=website.user)
+        scan.assert_not_called()
+
+    def test_no_claude_key_raises_before_scanning(self):
+        website = WebsiteFactory(
+            name="Car Signal", industry="", description="",
+            url="https://trycarsignal.com/",
+        )
+        with patch("apps.llm_ranking.services.domain_scanner.scan_domain") as scan, \
+             patch("apps.prompt_library.services.sample_prompts.ClaudeUtility", return_value=_unconfigured_llm()), \
+             pytest.raises(SynthesisNotConfigured):
             build_sample_prompts(website, count=4, user=website.user)
         scan.assert_not_called()
 
@@ -84,10 +119,14 @@ class TestUnclassifiable:
             name="Mystery", industry="", description="",
             url="https://unreachable.example/",
         )
-        with patch("apps.llm_ranking.services.domain_scanner.scan_domain", return_value={"success": False}):
+        fake = _configured_llm()
+        with patch("apps.llm_ranking.services.domain_scanner.scan_domain", return_value={"success": False}), \
+             patch("apps.prompt_library.services.sample_prompts.ClaudeUtility", return_value=fake):
             result = build_sample_prompts(website, count=6, user=website.user)
         assert result["source"] == "none"
         assert result["items"] == []
+        # Nothing to ground the prompts in, so the model is never asked.
+        fake.query.assert_not_called()
 
 
 class TestEndpoint:
@@ -100,7 +139,8 @@ class TestEndpoint:
         client = APIClient()
         client.force_authenticate(user=website.user)
         url = f"/api/v1/prompt-library/websites/{website.id}/prompts/generate-samples/"
-        with patch("apps.llm_ranking.services.domain_scanner.scan_domain", return_value={"success": False}):
+        with patch("apps.llm_ranking.services.domain_scanner.scan_domain", return_value={"success": False}), \
+             patch("apps.prompt_library.services.sample_prompts.ClaudeUtility", return_value=_configured_llm()):
             resp = client.post(url, {"count": 8}, format="json")
         assert resp.status_code == 422
         assert resp.json()["error"]["code"] == "site_not_classified"

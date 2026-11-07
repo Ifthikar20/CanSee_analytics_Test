@@ -26,9 +26,10 @@ from apps.websites.tests.factories import WebsiteFactory
 
 
 @pytest.fixture
-def no_openai(settings):
-    """Force the deterministic-fallback embedder so tests don't hit OpenAI."""
-    settings.OPENAI_API_KEY = ""
+def no_openai(fake_openai_embeddings):
+    """Offline embeddings: the conftest fake OpenAI client (the word-hash
+    fallback embedder was removed in 3320cdf)."""
+    return fake_openai_embeddings
 
 
 @pytest.fixture

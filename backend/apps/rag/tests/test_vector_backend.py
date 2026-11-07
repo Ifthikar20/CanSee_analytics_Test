@@ -5,9 +5,11 @@ same chunks as the Python cosine loop, tenant isolation holds, filtered
 calls keep using the exact path, and index failures degrade to the
 Python path instead of breaking retrieval.
 
-Uses the deterministic 256-dim hash embedder (no OPENAI_API_KEY in test
-settings), same as the rest of the rag suite. Each test gets a fresh
-tmp index directory so collections never leak across tests.
+Embeddings come from the offline OpenAI fake in conftest.py (1536-dim
+hashed bag-of-words vectors under the real model name), same as the rest
+of the rag suite; the word-hash fallback embedder was removed in 3320cdf.
+Each test gets a fresh tmp index directory so collections never leak
+across tests.
 """
 import uuid
 
@@ -47,16 +49,14 @@ def website(db):
 
 
 @pytest.fixture
-def chroma_settings(tmp_path):
+def chroma_settings(tmp_path, fake_openai_embeddings):
     vector_backends.reset_backend_for_tests()
-    # OPENAI_API_KEY blanked per house convention (see test_embedder,
-    # test_retriever): the developer's .env can carry a real key, and the
-    # suite must always use the deterministic hash embedder, never the
-    # network.
+    # fake_openai_embeddings sets a test key and replaces the OpenAI
+    # client, so the suite never reaches the network even when the
+    # developer's .env carries a real key.
     with override_settings(
         RAG_VECTOR_BACKEND="chroma",
         RAG_CHROMA_PATH=str(tmp_path / "idx"),
-        OPENAI_API_KEY="",
     ):
         yield
     vector_backends.reset_backend_for_tests()
@@ -95,7 +95,7 @@ class TestChromaBackendRetrieval:
     def test_backend_and_python_paths_agree(self, website, chroma_settings):
         """The money assertion: same corpus, same query, same hits."""
         _seed(website)
-        # The hash embedder is bag-of-words, not semantic: pick a query
+        # The fake embedder is bag-of-words, not semantic: pick a query
         # whose tokens overlap exactly one corpus text so the expected
         # top hit is deterministic.
         query = "returns policy refunds delivery"
@@ -103,7 +103,7 @@ class TestChromaBackendRetrieval:
         with_backend = retrieve(user=website.user, website=website, query=query)
 
         vector_backends.reset_backend_for_tests()
-        with override_settings(RAG_VECTOR_BACKEND="python", OPENAI_API_KEY=""):
+        with override_settings(RAG_VECTOR_BACKEND="python"):
             plain = retrieve(user=website.user, website=website, query=query)
 
         assert [h.chunk_id for h in with_backend] == [h.chunk_id for h in plain]
@@ -116,7 +116,7 @@ class TestChromaBackendRetrieval:
 
         with_backend = retrieve(user=website.user, website=website, query=query)
         vector_backends.reset_backend_for_tests()
-        with override_settings(RAG_VECTOR_BACKEND="python", OPENAI_API_KEY=""):
+        with override_settings(RAG_VECTOR_BACKEND="python"):
             plain = retrieve(user=website.user, website=website, query=query)
 
         for hb, hp in zip(with_backend, plain, strict=True):
@@ -200,7 +200,7 @@ class TestCrossTenantHardening:
     another tenant's answers - even when the index itself is wrong.
 
     The retriever's design makes Postgres the authority: index hits are
-    re-fetched with the (user, website) filter, so a polluted collection
+    re-fetched with the website filter, so a polluted collection
     can name foreign chunk ids all it likes and they drop out before
     ranking. These tests attack exactly that seam.
     """
@@ -260,29 +260,41 @@ class TestCrossTenantHardening:
         for h in hits:
             assert "SECRET" not in h.text
 
-    def test_same_website_foreign_user_chunk_is_excluded(self, chroma_settings):
-        """KnowledgeChunk carries its own user FK precisely so chunks are
-        insulated per-user even within one website. The index is keyed by
-        website alone, so this relies entirely on the re-fetch filter."""
+    def test_teammate_chunk_is_shared_but_other_website_is_not(self, chroma_settings):
+        """The knowledge base is shared per website (a71db88): a chunk a
+        teammate added on site A is part of site A's corpus, while the
+        same text on site B never reaches site A. The index is keyed by
+        website alone, and the re-fetch filter is website-only too."""
         user_a, site_a = self._tenant("a")
-        user_b, _site_b = self._tenant("b")
+        user_b, site_b = self._tenant("b")
+        teammate = self._tenant("t")[0]
         _seed(site_a, texts=["Ordinary notes about onboarding emails."])
 
-        src = KnowledgeSource.objects.create(
-            user=user_b, website=site_a,
-            url="https://a.example.com/foreign", kind=KnowledgeSource.KIND_DOCS,
-            status=KnowledgeSource.STATUS_READY,
-        )
-        vectors, model, dim = embed_texts(["Foreign user note inside site A."])
-        row = KnowledgeChunk.objects.create(
-            source=src, user=user_b, website=site_a, chunk_index=0,
-            text="Foreign user note inside site A.", embedding=vectors[0],
-            embedding_model=model, embedding_dim=dim,
-        )
-        backend = vector_backends.get_backend()
-        backend.replace_source(website_id=site_a.id, source_id=src.id,
-                               chunk_ids=[row.id], vectors=vectors, dim=dim)
+        text = "Teammate note inside site A."
+        rows = {}
+        for owner, site, url in (
+            (teammate, site_a, "https://a.example.com/teammate"),
+            (user_b, site_b, "https://b.example.com/foreign"),
+        ):
+            src = KnowledgeSource.objects.create(
+                user=owner, website=site, url=url,
+                kind=KnowledgeSource.KIND_DOCS,
+                status=KnowledgeSource.STATUS_READY,
+            )
+            vectors, model, dim = embed_texts([text])
+            row = KnowledgeChunk.objects.create(
+                source=src, user=owner, website=site, chunk_index=0,
+                text=text, embedding=vectors[0],
+                embedding_model=model, embedding_dim=dim,
+            )
+            vector_backends.get_backend().replace_source(
+                website_id=site.id, source_id=src.id,
+                chunk_ids=[row.id], vectors=vectors, dim=dim,
+            )
+            rows[site.id] = row
 
         hits = retrieve(user=user_a, website=site_a,
-                        query="foreign user note inside site")
-        assert all(h.chunk_id != str(row.id) for h in hits)
+                        query="teammate note inside site")
+        hit_ids = {h.chunk_id for h in hits}
+        assert str(rows[site_a.id].id) in hit_ids
+        assert str(rows[site_b.id].id) not in hit_ids

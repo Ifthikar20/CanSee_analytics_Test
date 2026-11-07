@@ -160,7 +160,9 @@ def test_unrun_prompt_returns_empty_rollups_not_nulls(setup):
     assert row["top_domains"] == []
     assert row["by_engine"] == []
     assert row["sentiment_dist"] == {"positive": 0, "neutral": 0, "negative": 0}
-    assert row["visibility_pct"] == 0
+    # 3320cdf: visibility is None until an engine has answered the prompt
+    # (a 0 would claim it was asked and never mentioned us).
+    assert row["visibility_pct"] is None
     assert row["sentiment_score"] is None
 
 

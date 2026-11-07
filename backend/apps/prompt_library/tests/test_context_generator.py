@@ -1,10 +1,22 @@
-"""Tests for the context-driven prompt generator."""
+"""Tests for the context-driven prompt generator.
+
+Since 3320cdf ("Remove fabricated output, demo seeds and dead code") the
+generator never substitutes a canned prompt: a missing provider raises
+SynthesisNotConfigured (409 at the API) and a failed or unusable call
+raises SynthesisFailed (502 at the API).
+"""
 from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+from rest_framework.test import APIClient
+
+from apps.accounts.tests.factories import UserFactory
 from apps.prompt_library.services.context_generator import (
+    SynthesisFailed,
+    SynthesisNotConfigured,
     generate_from_context,
     generate_related_prompts,
 )
@@ -23,15 +35,12 @@ def _provider(text: str, name: str = "deepseek"):
     return p
 
 
-def test_no_provider_returns_fallback():
+def test_no_provider_raises_not_configured():
     with patch(
         "apps.llm_ranking.providers.get_synthesis_provider",
         return_value=None,
-    ):
-        items, provider = generate_from_context("a real context with words")
-    assert provider == "fallback"
-    assert len(items) == 1
-    assert "{{" in items[0]["template_text"]
+    ), pytest.raises(SynthesisNotConfigured):
+        generate_from_context("a real context with words")
 
 
 def test_parses_strict_json_array():
@@ -91,20 +100,18 @@ def test_invalid_style_normalized():
     assert items[0]["intent_bucket"] == "category"
 
 
-def test_short_template_text_skipped_then_fallback():
+def test_short_template_text_skipped_then_fails():
     payload = '[{"template_text": "hi", "style": "question", "intent_bucket": "category"}]'
     with patch(
         "apps.llm_ranking.providers.get_synthesis_provider",
         return_value=_provider(payload),
-    ):
-        items, provider = generate_from_context("podcast about health Broadway NY 6pm")
-    # Item dropped, falls back to single safe template.
-    assert provider == "deepseek"
-    assert len(items) == 1
-    assert "{{" in items[0]["template_text"]
+    ), pytest.raises(SynthesisFailed):
+        # The only item is dropped; nothing usable is left, and no safe
+        # template is substituted.
+        generate_from_context("podcast about health Broadway NY 6pm")
 
 
-def test_provider_exception_falls_back():
+def test_provider_exception_raises_failed():
     boom = SimpleNamespace(name="deepseek")
 
     def _raise(*a, **kw):
@@ -114,18 +121,27 @@ def test_provider_exception_falls_back():
     with patch(
         "apps.llm_ranking.providers.get_synthesis_provider",
         return_value=boom,
+    ), pytest.raises(SynthesisFailed) as exc_info:
+        generate_from_context("a real context with words")
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+@pytest.mark.django_db
+def test_related_blank_seed_is_rejected_without_an_ai_call():
+    # No seed means nothing to relate to. 3320cdf dropped the service's
+    # blank-seed "fallback" return; the endpoint's serializer now refuses
+    # a blank seed before any provider is asked.
+    client = APIClient()
+    client.force_authenticate(user=UserFactory())
+    with patch(
+        "apps.llm_ranking.providers.get_synthesis_provider",
+        side_effect=AssertionError("provider must not be requested"),
     ):
-        items, provider = generate_from_context("a real context with words")
-    assert provider == "deepseek"
-    assert len(items) == 1
-
-
-def test_related_blank_seed_returns_empty():
-    # No seed means nothing to relate to; return an empty list (not a
-    # fallback row) so the caller can render nothing.
-    items, provider = generate_related_prompts("   ")
-    assert items == []
-    assert provider == "fallback"
+        r = client.post(
+            "/api/v1/prompt-library/prompts/generate-related/",
+            {"prompt": "   "}, format="json",
+        )
+    assert r.status_code == 400
 
 
 def test_related_short_seed_still_generates():
@@ -174,7 +190,7 @@ def test_related_pins_deepseek_and_meters_per_user():
     assert len(items) == 1
 
 
-def test_related_returns_empty_on_provider_failure():
+def test_related_raises_failed_on_provider_failure():
     boom = SimpleNamespace(name="deepseek")
 
     def _raise(*a, **kw):
@@ -184,11 +200,17 @@ def test_related_returns_empty_on_provider_failure():
     with patch(
         "apps.llm_ranking.providers.get_synthesis_provider",
         return_value=boom,
-    ):
-        items, name = generate_related_prompts("best CRM?")
-    # Best-effort: no junk fallback row, just nothing to show.
-    assert items == []
-    assert name == "deepseek"
+    ), pytest.raises(SynthesisFailed):
+        # No junk fallback row: the failure is reported (502 at the API).
+        generate_related_prompts("best CRM?")
+
+
+def test_related_no_provider_raises_not_configured():
+    with patch(
+        "apps.llm_ranking.providers.get_synthesis_provider",
+        return_value=None,
+    ), pytest.raises(SynthesisNotConfigured):
+        generate_related_prompts("best CRM?")
 
 
 def test_truncated_json_is_repaired():

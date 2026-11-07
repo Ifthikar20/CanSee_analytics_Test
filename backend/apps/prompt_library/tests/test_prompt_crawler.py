@@ -50,7 +50,43 @@ def test_llm_fanout_returns_empty_on_failure(monkeypatch):
 def test_crawl_prompt_sets_created_by_to_website_owner():
     """Regression: synchronous crawl path was creating audits without
     created_by, violating the not-null constraint on
-    llm_ranking_audit.created_by_id."""
+    llm_ranking_audit.created_by_id.
+
+    Since 3320cdf no audit is created when there is no model to ask, so
+    the crawl is given one configured model here."""
+    from apps.llm_ranking.services.extraction_service import HaikuExtractionService
+
+    website = WebsiteFactory()
+    prompt = _prompt(text="best pizza app in dfw")
+    fake_provider = MagicMock()
+    fake_provider.query.return_value = SimpleNamespace(
+        succeeded=True, text="1. PizzaNow", error="",
+    )
+
+    with patch(
+        "apps.prompt_library.services.prompt_crawler._llm_fanout",
+        return_value=[],
+    ), patch(
+        "apps.prompt_library.services.prompt_crawler.list_model_variants",
+        return_value=_variant("claude"),
+    ), patch.dict(
+        "apps.prompt_library.services.prompt_crawler.PROVIDERS",
+        {"claude": lambda: fake_provider}, clear=True,
+    ), patch(
+        "apps.prompt_library.services.prompt_crawler._extract_brands",
+        return_value=HaikuExtractionService._empty_result(),
+    ):
+        crawl_prompt(website, prompt)
+
+    audit = LLMRankingAudit.objects.filter(website=website).get()
+    assert audit.created_by_id == website.user_id
+    assert PromptCrawlRun.objects.filter(website=website, prompt=prompt).exists()
+
+
+@pytest.mark.django_db
+def test_crawl_prompt_with_no_model_to_ask_creates_no_audit():
+    """3320cdf: no audit is created when there is nothing to ask; the
+    crawl run itself still records the failure and why."""
     website = WebsiteFactory()
     prompt = _prompt(text="best pizza app in dfw")
 
@@ -63,9 +99,9 @@ def test_crawl_prompt_sets_created_by_to_website_owner():
     ):
         crawl_prompt(website, prompt)
 
-    audit = LLMRankingAudit.objects.filter(website=website).get()
-    assert audit.created_by_id == website.user_id
-    assert PromptCrawlRun.objects.filter(website=website, prompt=prompt).exists()
+    assert not LLMRankingAudit.objects.filter(website=website).exists()
+    run = PromptCrawlRun.objects.get(website=website, prompt=prompt)
+    assert run.status == PromptCrawlRun.STATUS_FAILED
 
 
 @pytest.mark.django_db
