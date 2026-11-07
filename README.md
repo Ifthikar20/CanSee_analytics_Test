@@ -63,7 +63,14 @@ copy them back before committing here.
 
 ## Status
 
-The backend suite was restored from the last backend commit that tracked it
-(the parent of `c2d7892`, early September 2026) plus tests added since. About
-127 tests fail because they predate later backend changes; see
-[docs/KNOWN_FAILURES.md](docs/KNOWN_FAILURES.md).
+`backend/` holds two sets of tests:
+
+- The suite restored from the last backend commit that tracked it (the
+  parent of `c2d7892`, early September 2026), plus tests added since. About
+  127 of these fail because they predate later backend changes; see
+  [docs/KNOWN_FAILURES.md](docs/KNOWN_FAILURES.md).
+- Tests that were only on a local machine, added in `e6690fc`, including
+  the `agent`, `autopilot`, `boards`, `insights` and `prompt_box` apps and
+  new `search_gap`, `billing` and `web_analytics` tests. Several of these
+  apps exist only on the backend branch `agent-workspace`, so run these
+  tests against a checkout that includes that work.

@@ -1,7 +1,8 @@
 # Known failing backend tests
 
 Snapshot taken on 2026-11-07 against CanSee_analytics_App commit 47f833d
-(the search-gap work). These tests predate about two months of backend
+(the search-gap work), covering only the restored September suite. The tests
+added in e6690fc were not part of this run. These tests predate about two months of backend
 changes and fail for that reason; they are not new regressions unless
 noted. Fix or update them, then remove them from this list.
 
