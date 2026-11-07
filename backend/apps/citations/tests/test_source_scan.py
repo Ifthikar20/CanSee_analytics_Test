@@ -1,5 +1,6 @@
 """Tests for the Source Intelligence pipeline (scan -> read -> sentiment)."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -64,7 +65,12 @@ def test_search_web_unconfigured_returns_empty(settings):
 # -- content_reader -----------------------------------------------------------
 
 def test_reddit_reader_extracts_scored_comments():
-    with patch.object(content_reader.requests, "get", return_value=_resp(REDDIT_PAYLOAD)) as mock_get:
+    # The reader fetches through the SSRF-guarded safe_get in the shared
+    # sources logic, not a bare requests.get.
+    fake = MagicMock()
+    fake.status_code = 200
+    fake.text = json.dumps(REDDIT_PAYLOAD)
+    with patch.object(content_reader.sources_logic, "safe_get", return_value=fake) as mock_get:
         out = content_reader.read_reddit_thread(
             "https://www.reddit.com/r/Dallas/comments/abc/best_bagels/"
         )

@@ -8,7 +8,6 @@ regression to an uninstallable dependency fails loudly.
 """
 from unittest.mock import patch
 
-import pytest
 from django.core import mail
 
 from apps.notifications.services.email_service import EmailService
@@ -50,36 +49,3 @@ class TestSendEmail:
         assert ok is False
         assert len(mail.outbox) == 0
 
-
-@pytest.mark.django_db
-class TestHotLeadAlert:
-    def _user(self):
-        from apps.accounts.models import User
-
-        return User.objects.create_user(
-            email="lead-owner@example.com",
-            password="TestPass123!",
-            full_name="Lead Owner",
-        )
-
-    def test_no_preference_row_means_no_email(self):
-        user = self._user()
-
-        class Lead:
-            score = 91
-
-        EmailService.send_hot_lead_alert(user=user, lead=Lead())
-        assert len(mail.outbox) == 0
-
-    def test_opted_in_user_gets_the_alert(self):
-        from apps.notifications.models import NotificationPreference
-
-        user = self._user()
-        NotificationPreference.objects.create(user=user, hot_lead_email=True)
-
-        class Lead:
-            score = 91
-
-        EmailService.send_hot_lead_alert(user=user, lead=Lead())
-        assert len(mail.outbox) == 1
-        assert "91" in mail.outbox[0].subject

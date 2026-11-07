@@ -93,7 +93,7 @@ class TestGa4Connection:
         assert data["is_active"] is True
         assert data["property_id"] == "123456"
 
-    def test_callback_connects_and_redirects_to_website_page(self, db):
+    def test_callback_connects_and_redirects_to_settings_connections(self, db):
         website = WebsiteFactory()
         state = ga4_oauth.build_authorize_url(website=website, user=website.user)
         from urllib.parse import parse_qs, urlparse
@@ -109,7 +109,11 @@ class TestGa4Connection:
             )
 
         assert resp.status_code == 302
-        assert resp["Location"] == f"http://frontend.test/websites/{website.id}?ga4=connected"
+        # GA4 is managed in Settings > Connections; the website id rides
+        # along so the SPA can make it active.
+        assert resp["Location"] == (
+            f"http://frontend.test/settings/connections?ga4=connected&website={website.id}"
+        )
         integration = Integration.objects.get(website=website, type="ga")
         assert integration.metadata["property_id"] == "111"
 
@@ -119,7 +123,9 @@ class TestGa4Connection:
             {"code": "c", "state": "tampered"},
         )
         assert resp.status_code == 302
-        assert resp["Location"].startswith("http://frontend.test/websites?ga4=error")
+        assert resp["Location"] == (
+            "http://frontend.test/settings/connections?ga4=error&reason=invalid_state"
+        )
 
     def test_select_property_validates(self, auth_client):
         client, user, website = auth_client

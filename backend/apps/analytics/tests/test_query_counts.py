@@ -99,9 +99,10 @@ class TestOverviewQueryBudget(TestCase):
 
     def test_overview_returns_the_same_shape(self):
         data = AnalyticsService.get_overview(website_id=str(self.website.id))
+        # hot_leads went with lead scoring (3320cdf).
         assert set(data) == {
             "period", "total_visitors", "total_pageviews",
-            "hot_leads", "visitor_growth_pct",
+            "visitor_growth_pct",
         }
 
 

@@ -155,7 +155,7 @@ class TestCommandRouter:
         connection = _slack_connection()
         WebsiteFactory(user=connection.user)
         provider = MagicMock()
-        provider.query.return_value = SimpleNamespace(text="synth answer")
+        provider.query.return_value = SimpleNamespace(succeeded=True, text="synth answer")
         with patch(
             "apps.llm_ranking.providers.get_provider", return_value=provider,
         ), patch(
@@ -171,6 +171,8 @@ class TestCommandRouter:
         assert kwargs["role"] == "chat_command"
 
     def test_ask_without_provider_is_honest(self):
+        from apps.notifications.tasks import ASK_NOT_CONFIGURED_REPLY
+
         connection = _slack_connection()
         WebsiteFactory(user=connection.user)
         with patch(
@@ -182,7 +184,8 @@ class TestCommandRouter:
                 connection_id=str(connection.id), command="ask",
                 text="anything", respond_to=SLACK_RESPONSE_URL,
             )
-        assert "No AI provider is configured" in _slack_reply_text(mock_post)
+        assert _slack_reply_text(mock_post) == ASK_NOT_CONFIGURED_REPLY
+        assert ASK_NOT_CONFIGURED_REPLY == "Cansee couldn't answer right now: AI isn't available."
 
     def test_ask_without_website_is_honest(self):
         connection = _slack_connection()
@@ -205,7 +208,9 @@ class TestCommandRouter:
         assert "no saved prompts" in _slack_reply_text(mock_post)
         assert LLMRankingAudit.objects.count() == 0
 
-    def test_scan_queues_audit_from_saved_prompts(self):
+    def test_scan_queues_audit_from_saved_prompts(self, settings):
+        # create_audit refuses to queue a run when no engine has a key.
+        settings.OPENAI_API_KEY = "sk-test"
         connection = _slack_connection()
         website = WebsiteFactory(user=connection.user)
         from apps.llm_ranking.models import LLMRankingAudit
@@ -263,7 +268,7 @@ class TestReportNarration:
                 text="", respond_to=SLACK_RESPONSE_URL,
             )
         text = _slack_reply_text(mock_post)
-        assert "Traffic:" in text
+        assert "Traffic (last 24h):" in text
         assert "No AI visibility data yet" in text
         assert "View the full dashboard at https://app.example.test" in text
         assert "cansee.ai" not in text
@@ -276,7 +281,7 @@ class TestReportNarration:
                 connection_id=str(connection.id), command="report",
                 text="", respond_to=SLACK_RESPONSE_URL,
             )
-        assert "Traffic:" in _slack_reply_text(mock_post)
+        assert "Traffic (last 24h):" in _slack_reply_text(mock_post)
 
 
 @pytest.mark.django_db
@@ -447,7 +452,7 @@ class TestAskFactPack:
         connection = _slack_connection()
         WebsiteFactory(user=connection.user, name="Alpha")
         provider = MagicMock()
-        provider.query.return_value = SimpleNamespace(text="grounded answer")
+        provider.query.return_value = SimpleNamespace(succeeded=True, text="grounded answer")
         overviews = [
             {"total_visitors": 120, "total_pageviews": 300},  # last 24h
             {"total_visitors": 100, "total_pageviews": 260},  # previous 24h
@@ -518,7 +523,7 @@ class TestAskFactPack:
         )
 
         provider = MagicMock()
-        provider.query.return_value = SimpleNamespace(text="grounded answer")
+        provider.query.return_value = SimpleNamespace(succeeded=True, text="grounded answer")
         with patch(
             "apps.llm_ranking.providers.get_provider", return_value=provider,
         ), patch(

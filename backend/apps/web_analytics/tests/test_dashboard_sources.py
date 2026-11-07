@@ -44,6 +44,14 @@ def _report(rows):
 
 @pytest.mark.django_db
 def test_ga4_bundle_report_period_shapes():
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    # The chart is zero-filled over the 30 days ending today, so the GA4
+    # rows must fall inside that window (fixed dates age out of it).
+    today = timezone.now().date()
+    day_before, last_day = (today - timedelta(days=1)).strftime("%Y%m%d"), today.strftime("%Y%m%d")
     responses = [
         # KPIs: two date ranges -> implicit dateRange dimension.
         _report([
@@ -51,7 +59,7 @@ def test_ga4_bundle_report_period_shapes():
             (["date_range_1"], [100, 400, 100.0, 0.5]),
         ]),
         # Chart (date, [users, views, sessions]).
-        _report([(["20260824"], [10, 30, 12]), (["20260825"], [12, 40, 14])]),
+        _report([([day_before], [10, 30, 12]), ([last_day], [12, 40, 14])]),
         # Pages.
         _report([(["/pricing"], [50]), (["/docs"], [30])]),
         # Sources (sessionSource, sessionMedium, sessions).
@@ -78,7 +86,9 @@ def test_ga4_bundle_report_period_shapes():
     assert o["pageviews_trend"] == 60.0
     assert o["avg_session"] == "1:35"
     assert o["bounce_rate"] == 42.0
-    assert o["hot_leads"] == 0
+    # Lead scoring was removed (3320cdf); the GA4 overview no longer
+    # carries a hot_leads placeholder.
+    assert "hot_leads" not in o
 
     # Chart is zero-filled across the whole window with GA4 rows merged in.
     assert len(bundle["chart"]) == 30
@@ -280,7 +290,9 @@ def test_cloudflare_hourly_bundle():
         bundle = cloudflare_dashboard.build_bundle("tok", "z1", period="24h")
 
     assert bundle["overview"]["total_visitors"] == 20
-    assert bundle["overview"]["visitor_growth_pct"] == 0  # previous failed -> trend 0
+    # Previous window failed -> nothing to compare, so the trend is
+    # unknown (None), not 0%.
+    assert bundle["overview"]["visitor_growth_pct"] is None
     assert len(bundle["chart"]) == 24
 
 

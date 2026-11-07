@@ -138,7 +138,9 @@ class TestWebsiteSourceInfluenceAggregation:
         client, user = auth_client
         website = WebsiteFactory(user=user)
         # 4 providers x 5 prompts x 3 citations each = 60 citations.
-        providers = ["perplexity", "claude", "gpt-4", "gemini"]
+        # Real provider keys (LLMRankingResult.PROVIDER_*): the native
+        # citation extractor is chosen by key, and "gpt-4" is not one.
+        providers = ["perplexity", "claude", "gpt4", "gemini"]
         audit = LLMRankingAuditFactory(website=website, created_by=user)
         for prov in providers:
             for idx in range(5):

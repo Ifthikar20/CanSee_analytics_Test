@@ -120,7 +120,7 @@ def test_verification_code_expires_and_is_attempt_limited(settings):
 @pytest.mark.django_db
 def test_notify_refuses_unverified_and_opted_out(sms_on):
     user = UserFactory()
-    with patch.object(sms_service, "send_sms", return_value=True) as send:
+    with patch.object(sms_service, "_send", return_value=sms_service.SENT) as send:
         assert sms_service.notify(_sub(user, status=SmsSubscription.Status.PENDING), "hi") is False
         SmsSubscription.objects.all().delete()
         assert sms_service.notify(_sub(user, status=SmsSubscription.Status.OPTED_OUT), "hi") is False
@@ -132,8 +132,9 @@ def test_notify_refuses_unverified_and_opted_out(sms_on):
 def test_notify_sends_to_a_verified_number(sms_on):
     user = UserFactory()
     sub = _sub(user)
-    with patch.object(sms_service, "send_sms", return_value=True):
+    with patch.object(sms_service, "_send", return_value=sms_service.SENT) as send:
         assert sms_service.notify(sub, "Visibility dropped 9 points.") is True
+    send.assert_called_once_with(PHONE, "Visibility dropped 9 points.")
     sub.refresh_from_db()
     assert sub.last_message_at is not None
 

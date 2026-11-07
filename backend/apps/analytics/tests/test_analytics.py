@@ -219,8 +219,11 @@ class DailyStatsServiceTest(TestCase):
     def test_get_device_breakdown(self):
         from apps.analytics.services.daily_stats import DailyStatsService
         data = DailyStatsService.get_device_breakdown(website_id=str(self.website.id))
-        self.assertIsInstance(data, list)
-        device_names = [d["name"] for d in data]
+        # Device, browser and OS distributions come back together.
+        self.assertIsInstance(data, dict)
+        self.assertEqual(set(data), {"devices", "browsers", "operating_systems"})
+        self.assertIsInstance(data["devices"], list)
+        device_names = [d["name"] for d in data["devices"]]
         self.assertTrue(any(name in device_names for name in ["Desktop", "Mobile", "Tablet"]))
 
     def test_get_country_breakdown(self):
@@ -561,11 +564,13 @@ class EventLogViewTest(TestCase):
             f"/api/v1/analytics/{self.website.id}/event-log/", {"page_size": 2},
         )
         self.assertEqual(resp.status_code, 200)
+        # EnvelopeRenderer moves "results" to "data" and the other
+        # pagination keys into "meta".
         body = resp.json()
-        self.assertEqual(body["total"], 5)
-        self.assertEqual(body["page_size"], 2)
-        self.assertEqual(len(body["results"]), 2)
-        self.assertEqual(body["retention_days"], 180)
+        self.assertEqual(body["meta"]["total"], 5)
+        self.assertEqual(body["meta"]["page_size"], 2)
+        self.assertEqual(len(body["data"]), 2)
+        self.assertEqual(body["meta"]["retention_days"], 180)
 
     def test_filters_by_event_type_device_and_q(self):
         now = timezone.now()
@@ -578,11 +583,11 @@ class EventLogViewTest(TestCase):
             )
         base = f"/api/v1/analytics/{self.website.id}/event-log/"
 
-        self.assertEqual(self.client.get(base, {"event_type": "click"}).json()["total"], 2)
-        self.assertEqual(self.client.get(base, {"device": "mobile"}).json()["total"], 2)
+        self.assertEqual(self.client.get(base, {"event_type": "click"}).json()["meta"]["total"], 2)
+        self.assertEqual(self.client.get(base, {"device": "mobile"}).json()["meta"]["total"], 2)
         body = self.client.get(base, {"q": "page-3"}).json()
-        self.assertEqual(body["total"], 1)
-        self.assertTrue(body["results"][0]["url"].endswith("page-3"))
+        self.assertEqual(body["meta"]["total"], 1)
+        self.assertTrue(body["data"][0]["url"].endswith("page-3"))
 
     def test_clamps_to_retention_floor(self):
         now = timezone.now()
@@ -591,8 +596,8 @@ class EventLogViewTest(TestCase):
         body = self.client.get(
             f"/api/v1/analytics/{self.website.id}/event-log/",
         ).json()
-        urls = [r["url"] for r in body["results"]]
-        self.assertEqual(body["total"], 1)
+        urls = [r["url"] for r in body["data"]]
+        self.assertEqual(body["meta"]["total"], 1)
         self.assertIn("/recent", urls)
         self.assertNotIn("/ancient", urls)
 
@@ -684,11 +689,16 @@ class IngestionAccuracyTest(TestCase):
 
     def test_visit_count_increments_per_session_not_per_event(self):
         key = str(self.website.pixel_key)
+        # Client timestamps more than 5 minutes ahead of the server are
+        # clamped to now, so the first session is placed 40 minutes in the
+        # past (inside the 24 h back window) instead of the 4th event in
+        # the future.
+        earlier = (timezone.now() - timedelta(minutes=40)).isoformat()
         # Three events in the same session (within 30 min) -> visit_count stays 1.
         for url in ("/a", "/b", "/c"):
             self.svc.ingest_event(
                 pixel_key=key,
-                event_data=self._event(url="https://www.outfi.ai" + url),
+                event_data=self._event(url="https://www.outfi.ai" + url, timestamp=earlier),
                 request=self._req(),
             )
         v = Visitor.objects.get(website=self.website)
@@ -696,10 +706,9 @@ class IngestionAccuracyTest(TestCase):
         self.assertEqual(Session.objects.filter(visitor=v).count(), 1)
 
         # A 4th event 40 minutes later opens a new session -> visit_count 2.
-        future = (timezone.now() + timedelta(minutes=40)).isoformat()
         self.svc.ingest_event(
             pixel_key=key,
-            event_data=self._event(url="https://www.outfi.ai/d", timestamp=future),
+            event_data=self._event(url="https://www.outfi.ai/d"),
             request=self._req(),
         )
         v.refresh_from_db()
@@ -828,12 +837,15 @@ class IngestEndpointBodySizeTest(APITestCase):
         self.website = create_test_website(self.user)
 
     def test_oversized_body_rejected_413(self):
-        # Declare a huge content-length; the guard rejects before parsing.
+        # A 200 KB body is past the 64 KB cap; the guard reads the WSGI
+        # CONTENT_LENGTH and rejects before parsing. (An HTTP_CONTENT_LENGTH
+        # extra is a different META key and never reaches the guard.)
+        pad = "x" * (200 * 1024)
+        body = f'{{"pixel_key": "{self.website.pixel_key}", "pad": "{pad}"}}'
         resp = self.client.post(
             "/api/v1/track/event/",
-            data="{}",
+            data=body,
             content_type="application/json",
-            HTTP_CONTENT_LENGTH=str(200 * 1024),
             HTTP_ORIGIN="https://www.outfi.ai",
         )
         self.assertEqual(resp.status_code, 413)
