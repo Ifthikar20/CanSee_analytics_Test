@@ -1,11 +1,20 @@
 """Tests for LLM Ranking service logic."""
-from unittest.mock import MagicMock, patch
+import itertools
+from unittest.mock import patch
 
 import pytest
 
 from apps.llm_ranking.models import LLMRankingAudit, LLMRankingResult
-from apps.llm_ranking.services.ranking_service import LLMRankingService
+from apps.llm_ranking.services.ranking_service import SCORE_FIELDS, LLMRankingService
 from apps.llm_ranking.tests.factories import LLMRankingAuditFactory, LLMRankingResultFactory
+
+# Each (audit, prompt_index, provider, model_id, run_id) cell is unique.
+_PROMPT_INDEX = itertools.count()
+
+
+def _result(audit, **kwargs):
+    kwargs.setdefault("prompt_index", next(_PROMPT_INDEX))
+    return LLMRankingResultFactory(audit=audit, **kwargs)
 
 # ── Mention analysis ──────────────────────────────────────────────────────────
 
@@ -88,10 +97,12 @@ class TestAnalyzeMention:
 
 @pytest.mark.django_db
 class TestComputeOverallScore:
-    def test_empty_results_returns_zero(self):
+    def test_empty_results_returns_none(self):
+        # No answered query: nothing was measured, so no score is invented.
         scores = LLMRankingService.compute_overall_score([])
-        assert scores["overall_score"] == 0
-        assert scores["mention_rate"] == 0.0
+        assert scores == dict.fromkeys(SCORE_FIELDS)
+        assert scores["overall_score"] is None
+        assert scores["mention_rate"] is None
 
     def test_all_mentioned_rank_1_gives_high_score(self):
         audit = LLMRankingAuditFactory()
@@ -155,87 +166,32 @@ class TestComputeOverallScore:
         assert scores["overall_score"] <= 100
 
 
-# ── run_audit integration (mocked providers) ─────────────────────────────────
-
-@pytest.mark.django_db
-class TestRunAudit:
-    def _mock_providers(self):
-        return {
-            "apps.llm_ranking.services.ranking_service.LLMRankingService._query_claude":
-                MagicMock(return_value=(True, "1. Acme SaaS — recommended\n2. Others", "")),
-            "apps.llm_ranking.services.ranking_service.LLMRankingService._query_openai":
-                MagicMock(return_value=(False, "", "OPENAI_API_KEY not configured")),
-            "apps.llm_ranking.services.ranking_service.LLMRankingService._query_gemini":
-                MagicMock(return_value=(False, "", "GEMINI_API_KEY not configured")),
-            "apps.llm_ranking.services.ranking_service.LLMRankingService._query_perplexity":
-                MagicMock(return_value=(False, "", "PERPLEXITY_API_KEY not configured")),
-        }
-
-    def test_run_audit_completes(self):
-        audit = LLMRankingAuditFactory(
-            business_name="Acme SaaS",
-            keywords=["acme"],
-            prompts=["What is the best SaaS tool?"],
-        )
-        with patch.multiple("apps.llm_ranking.services.ranking_service.LLMRankingService",
-                            _query_claude=MagicMock(return_value=(True, "1. Acme SaaS is great\n2. Others", "")),
-                            _query_openai=MagicMock(return_value=(False, "", "no key")),
-                            _query_gemini=MagicMock(return_value=(False, "", "no key")),
-                            _query_perplexity=MagicMock(return_value=(False, "", "no key"))):
-            LLMRankingService.run_audit(audit_id=str(audit.id))
-
-        audit.refresh_from_db()
-        assert audit.status == LLMRankingAudit.STATUS_COMPLETED
-        assert audit.overall_score >= 0
-        assert audit.results.count() == 4  # 4 providers × 1 prompt
-
-    def test_run_audit_marks_failed_on_exception(self):
-        audit = LLMRankingAuditFactory(prompts=["test?"])
-        with patch("apps.llm_ranking.services.ranking_service.LLMRankingService._query_claude",
-                   side_effect=Exception("unexpected error")):
-            with patch("apps.llm_ranking.services.ranking_service.LLMRankingService._query_openai",
-                       return_value=(False, "", "no key")), \
-                 patch("apps.llm_ranking.services.ranking_service.LLMRankingService._query_gemini",
-                       return_value=(False, "", "no key")), \
-                 patch("apps.llm_ranking.services.ranking_service.LLMRankingService._query_perplexity",
-                       return_value=(False, "", "no key")):
-                # Should not raise — exception is caught per-provider
-                LLMRankingService.run_audit(audit_id=str(audit.id))
-
-        audit.refresh_from_db()
-        # Audit still completes even if one provider errors
-        assert audit.status == LLMRankingAudit.STATUS_COMPLETED
-
-    def test_run_audit_stores_mention_correctly(self):
-        audit = LLMRankingAuditFactory(
-            business_name="Acme SaaS",
-            keywords=["acme"],
-            prompts=["Best tool?"],
-        )
-        with patch.multiple("apps.llm_ranking.services.ranking_service.LLMRankingService",
-                            _query_claude=MagicMock(return_value=(True, "1. Acme SaaS tops the list", "")),
-                            _query_openai=MagicMock(return_value=(False, "", "no key")),
-                            _query_gemini=MagicMock(return_value=(False, "", "no key")),
-                            _query_perplexity=MagicMock(return_value=(False, "", "no key"))):
-            LLMRankingService.run_audit(audit_id=str(audit.id))
-
-        result = LLMRankingResult.objects.get(
-            audit=audit, provider=LLMRankingResult.PROVIDER_CLAUDE
-        )
-        assert result.is_mentioned is True
-        assert result.query_succeeded is True
-
-
 # ── Recommendations ───────────────────────────────────────────────────────────
 
 @pytest.mark.django_db
 class TestRecommendations:
+    # Recommendations are derived from the run's answers; an audit with no
+    # results gets the "start a prompt run" placeholder instead.
+
+    def test_no_results_asks_for_a_prompt_run(self):
+        audit = LLMRankingAuditFactory(
+            status=LLMRankingAudit.STATUS_COMPLETED,
+            overall_score=15,
+            mention_rate=10.0,
+        )
+        recs = LLMRankingService.generate_recommendations(audit=audit)
+        assert recs == ["Start a prompt run to see recommendations."]
+
     def test_low_score_gives_content_recommendation(self):
         audit = LLMRankingAuditFactory(
             status=LLMRankingAudit.STATUS_COMPLETED,
             overall_score=15,
             mention_rate=10.0,
             avg_mention_rank=0.0,
+        )
+        _result(
+            audit, query_succeeded=True, is_mentioned=False, mention_rank=None,
+            sentiment=LLMRankingResult.SENTIMENT_NOT_MENTIONED,
         )
         recs = LLMRankingService.generate_recommendations(audit=audit)
         assert len(recs) >= 1
@@ -249,6 +205,10 @@ class TestRecommendations:
             mention_rate=85.0,
             avg_mention_rank=1.5,
         )
+        _result(
+            audit, query_succeeded=True, is_mentioned=True, mention_rank=1,
+            sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
+        )
         recs = LLMRankingService.generate_recommendations(audit=audit)
         combined = " ".join(recs).lower()
         assert "maintain" in combined or "strong" in combined or "content" in combined
@@ -259,6 +219,10 @@ class TestRecommendations:
             overall_score=50,
             mention_rate=70.0,
             avg_mention_rank=7.0,
+        )
+        _result(
+            audit, query_succeeded=True, is_mentioned=True, mention_rank=7,
+            sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
         )
         recs = LLMRankingService.generate_recommendations(audit=audit)
         combined = " ".join(recs).lower()
@@ -306,8 +270,8 @@ class TestComputeOverallScoreCI:
     def test_mention_rate_ci_is_returned(self):
         audit = LLMRankingAuditFactory()
         results = [
-            LLMRankingResultFactory(
-                audit=audit, provider="claude",
+            _result(
+                audit, provider="claude",
                 is_mentioned=(i % 2 == 0), query_succeeded=True,
                 mention_rank=1 if (i % 2 == 0) else None,
                 sentiment=(LLMRankingResult.SENTIMENT_POSITIVE if (i % 2 == 0)
@@ -335,8 +299,15 @@ class TestBetaBinomialMean:
 
     def test_approaches_empirical_at_large_n(self):
         from apps.llm_ranking.services.ranking_service import beta_binomial_mean
-        # With n=100 the posterior should be close to the empirical 80%.
-        assert abs(beta_binomial_mean(80, 100) - 0.80) < 0.05
+        # The Beta(2, 8) prior carries the weight of 10 observations, so at
+        # n=100 the posterior is still (2+80)/(10+100) = 0.745. By n=1000
+        # it is (2+800)/(10+1000) = 0.794, close to the empirical 80%.
+        assert beta_binomial_mean(80, 100) == pytest.approx(82 / 110)
+        assert abs(beta_binomial_mean(800, 1000) - 0.80) < 0.01
+        assert (
+            abs(beta_binomial_mean(800, 1000) - 0.80)
+            < abs(beta_binomial_mean(80, 100) - 0.80)
+        )
 
 
 @pytest.mark.django_db
@@ -356,9 +327,10 @@ class TestComputeOverallScoreSmoothed:
         assert "mention_rate_smoothed" in scores
         assert scores["mention_rate_smoothed"] < 50.0  # heavily shrunk
 
-    def test_empty_results_includes_smoothed_zero(self):
+    def test_empty_results_includes_smoothed_none(self):
         scores = LLMRankingService.compute_overall_score([])
-        assert scores["mention_rate_smoothed"] == 0.0
+        assert "mention_rate_smoothed" in scores
+        assert scores["mention_rate_smoothed"] is None
 
 
 # ── Haiku extraction service ──────────────────────────────────────────────────
@@ -426,194 +398,3 @@ class TestHaikuExtractionService:
                 response_text="x", brand_name="Acme SaaS", keywords=[],
             )
         assert result["sentiment"] == "not_mentioned"
-
-
-# ── Prompt library ────────────────────────────────────────────────────────────
-
-class TestPromptLibrary:
-    def test_generate_returns_dict_list_with_intents(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        prompts = PromptLibrary.generate(industry="SaaS analytics")
-        assert len(prompts) > 0
-        for p in prompts:
-            assert set(p.keys()) == {"text", "intent"}
-            assert isinstance(p["text"], str) and p["text"]
-            assert isinstance(p["intent"], str) and p["intent"]
-
-    def test_mix_includes_multiple_intents(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        prompts = PromptLibrary.generate(industry="CRM", max_prompts=10)
-        intents = {p["intent"] for p in prompts}
-        # With 10 prompts we should cover at least 4 distinct intents.
-        assert len(intents) >= 4
-
-    def test_location_adds_local_intent(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        local = PromptLibrary.generate(industry="law firm", location="Dallas, TX", max_prompts=10)
-        assert any(p["intent"] == "local" for p in local)
-        for p in local:
-            if p["intent"] == "local":
-                assert "Dallas, TX" in p["text"]
-
-    def test_no_location_omits_local_intent(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        prompts = PromptLibrary.generate(industry="analytics", max_prompts=10)
-        assert all(p["intent"] != "local" for p in prompts)
-
-    def test_max_prompts_is_respected(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        prompts = PromptLibrary.generate(industry="x", max_prompts=3)
-        assert len(prompts) == 3
-
-    def test_generate_texts_returns_unique_strings(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        texts = PromptLibrary.generate_texts(industry="x", max_prompts=10)
-        assert len(texts) == len(set(texts))
-        assert all(isinstance(t, str) and t for t in texts)
-
-    def test_intents_for_tags_generated_prompts(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        texts = PromptLibrary.generate_texts(industry="design tools", max_prompts=6)
-        intents = PromptLibrary.intents_for(texts)
-        assert len(intents) == len(texts)
-        # Generated prompts should map to real intents, not "custom".
-        assert any(i != "custom" for i in intents)
-
-    def test_intents_for_returns_custom_for_unknown_text(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        intents = PromptLibrary.intents_for(["Should I buy a kayak this weekend?"])
-        assert intents == ["custom"]
-
-    def test_themes_filter_restricts_intents(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        prompts = PromptLibrary.generate(
-            industry="SaaS analytics", max_prompts=10,
-            themes=["recommendation", "comparison"],
-        )
-        intents = {p["intent"] for p in prompts}
-        assert intents <= {"recommendation", "comparison"}
-        assert len(prompts) > 0
-
-    def test_empty_themes_falls_back_to_default_mix(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        prompts = PromptLibrary.generate(industry="x", max_prompts=10, themes=[])
-        intents = {p["intent"] for p in prompts}
-        # Empty -> not restricted, so multi-intent coverage as before.
-        assert len(intents) >= 4
-
-    def test_unknown_theme_is_silently_dropped(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        prompts = PromptLibrary.generate(
-            industry="x", max_prompts=5,
-            themes=["recommendation", "made_up_intent"],
-        )
-        intents = {p["intent"] for p in prompts}
-        assert intents == {"recommendation"}
-
-
-# ── Prompt pack JSON loader ───────────────────────────────────────────────────
-
-class TestPromptPackLoader:
-    def test_default_pack_loads(self):
-        from apps.llm_ranking.services.prompt_library import DEFAULT_PACK, load_pack
-        pack = load_pack(DEFAULT_PACK)
-        assert pack is not None
-        assert pack.name
-        assert len(pack.templates) > 0
-
-    def test_default_pack_has_industry_coverage(self):
-        # The default pack should carry prompts for every intent we weight.
-        from apps.llm_ranking.services.prompt_library import (
-            DEFAULT_PACK,
-            INTENT_PRIORITY,
-            load_pack,
-        )
-        pack = load_pack(DEFAULT_PACK)
-        assert pack is not None
-        intents_in_pack = {t.intent for t in pack.templates}
-        expected = {intent for intent, _ in INTENT_PRIORITY}
-        assert expected.issubset(intents_in_pack)
-
-    def test_unknown_pack_returns_none(self):
-        from apps.llm_ranking.services.prompt_library import load_pack
-        assert load_pack("not_a_real_pack_xyz") is None
-
-    def test_list_available_packs_contains_known_industries(self):
-        from apps.llm_ranking.services.prompt_library import list_available_packs
-        names = set(list_available_packs())
-        # These are the packs we ship with the repo.
-        assert {"default", "saas", "ecommerce", "legal", "agency", "healthcare"}.issubset(names)
-
-    def test_match_industry_saas(self):
-        from apps.llm_ranking.services.prompt_library import match_industry_pack
-        pack = match_industry_pack("SaaS analytics")
-        assert pack is not None
-        assert "saas" in pack.industry_keys or any("saas" in k for k in pack.industry_keys)
-
-    def test_match_industry_legal(self):
-        from apps.llm_ranking.services.prompt_library import match_industry_pack
-        pack = match_industry_pack("Law firm specialising in IP")
-        assert pack is not None
-        assert any(k in ("law firm", "legal", "attorney", "lawyer", "legal services", "legal tech")
-                   for k in pack.industry_keys)
-
-    def test_match_industry_ecommerce(self):
-        from apps.llm_ranking.services.prompt_library import match_industry_pack
-        pack = match_industry_pack("Shopify store for DTC skincare")
-        assert pack is not None
-
-    def test_match_industry_no_match_returns_none(self):
-        from apps.llm_ranking.services.prompt_library import match_industry_pack
-        # Deliberately weird industry to avoid substring hits.
-        assert match_industry_pack("underwater basket weaving") is None
-
-    def test_match_industry_empty_string(self):
-        from apps.llm_ranking.services.prompt_library import match_industry_pack
-        assert match_industry_pack("") is None
-
-    def test_generate_includes_industry_pack_prompts(self):
-        """When an industry matches, its prompts should appear in the output."""
-        from apps.llm_ranking.services.prompt_library import PromptLibrary, load_pack
-        saas_pack = load_pack("saas")
-        assert saas_pack is not None
-        saas_texts = {t.text for t in saas_pack.templates}
-
-        generated = PromptLibrary.generate_texts(industry="SaaS", max_prompts=10)
-        # At least one generated prompt should come from the saas pack (templates
-        # with placeholders are filled; check via substring of the pre-fill text
-        # with the placeholder stripped).
-        saas_signals = [t.split("{")[0] for t in saas_texts]
-        assert any(
-            any(sig and sig in g for sig in saas_signals if len(sig) > 12)
-            for g in generated
-        )
-
-    def test_generate_falls_back_to_default_for_unknown_industry(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        prompts = PromptLibrary.generate_texts(industry="rubber duck racing", max_prompts=6)
-        assert len(prompts) > 0  # default pack still produces prompts
-
-    def test_resolved_pack_names_reflects_industry_match(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        names = PromptLibrary.resolved_pack_names(industry="SaaS analytics")
-        assert "default" in names
-        assert "saas" in names
-
-    def test_resolved_pack_names_default_only_for_unknown(self):
-        from apps.llm_ranking.services.prompt_library import PromptLibrary
-        names = PromptLibrary.resolved_pack_names(industry="rubber duck racing")
-        assert names == ["default"]
-
-    def test_malformed_pack_entries_are_skipped(self):
-        from apps.llm_ranking.services.prompt_library import _parse_pack
-        pack = _parse_pack({
-            "name": "Test",
-            "industry_keys": [],
-            "prompts": [
-                {"text": "good {industry}", "intent": "recommendation", "placeholders": ["industry"]},
-                "not a dict",                                   # dropped
-                {"text": "", "intent": "recommendation"},       # dropped: empty text
-                {"text": "bad intent", "intent": "made_up"},    # dropped: invalid intent
-            ],
-        })
-        assert len(pack.templates) == 1

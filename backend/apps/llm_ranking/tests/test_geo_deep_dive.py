@@ -1,4 +1,9 @@
-"""Tests for the dashboard deep-dive analytics."""
+"""Tests for the dashboard deep-dive analytics.
+
+Audits are scoped by project (the websites the user can access), not by
+creator, so every audit here belongs to a website the user owns.
+"""
+import itertools
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +20,10 @@ from apps.llm_ranking.tests.factories import (
     LLMRankingAuditFactory,
     LLMRankingResultFactory,
 )
+from apps.websites.tests.factories import WebsiteFactory
+
+# Each (audit, prompt_index, provider, model_id, run_id) cell is unique.
+_PROMPT_INDEX = itertools.count()
 
 
 @pytest.fixture(autouse=True)
@@ -24,13 +33,25 @@ def _clear_cache():
     cache.clear()
 
 
+def _site_for(user):
+    from apps.websites.models import Website
+
+    return Website.objects.filter(user=user).first() or WebsiteFactory(user=user)
+
+
 def _completed_audit(user, **kwargs):
+    kwargs.setdefault("completed_at", timezone.now())
     return LLMRankingAuditFactory(
+        website=_site_for(user),
         created_by=user,
         status=LLMRankingAudit.STATUS_COMPLETED,
-        completed_at=timezone.now(),
         **kwargs,
     )
+
+
+def _result(audit, **kwargs):
+    kwargs.setdefault("prompt_index", next(_PROMPT_INDEX))
+    return LLMRankingResultFactory(audit=audit, **kwargs)
 
 
 @pytest.mark.django_db
@@ -41,20 +62,16 @@ class TestBuildForUser:
 
     def test_visibility_matrix_dedupes_by_most_recent_audit(self):
         user = UserFactory()
-        older = LLMRankingAuditFactory(
-            created_by=user, status=LLMRankingAudit.STATUS_COMPLETED,
-            completed_at=timezone.now() - timezone.timedelta(days=5),
+        older = _completed_audit(
+            user, completed_at=timezone.now() - timezone.timedelta(days=5),
         )
-        newer = LLMRankingAuditFactory(
-            created_by=user, status=LLMRankingAudit.STATUS_COMPLETED,
-            completed_at=timezone.now(),
-        )
-        LLMRankingResultFactory(
-            audit=older, prompt="P1", provider="claude",
+        newer = _completed_audit(user)
+        _result(
+            older, prompt="P1", provider="claude",
             query_succeeded=True, is_mentioned=False, mention_rank=None,
         )
-        LLMRankingResultFactory(
-            audit=newer, prompt="P1", provider="claude",
+        _result(
+            newer, prompt="P1", provider="claude",
             query_succeeded=True, is_mentioned=True, mention_rank=2,
         )
         with patch("apps.llm_ranking.providers.get_provider", return_value=None):
@@ -71,8 +88,8 @@ class TestBuildForUser:
             ("claude", 1), ("claude", 1), ("claude", 5),
             ("gpt4", 12), ("gpt4", 2),
         ]:
-            LLMRankingResultFactory(
-                audit=audit, provider=provider,
+            _result(
+                audit, provider=provider,
                 query_succeeded=True, is_mentioned=True, mention_rank=rank,
             )
         out = build_for_user(user)["position_by_provider"]
@@ -86,16 +103,16 @@ class TestBuildForUser:
     def test_sentiment_split_per_provider(self):
         user = UserFactory()
         audit = _completed_audit(user)
-        LLMRankingResultFactory(
-            audit=audit, provider="claude", query_succeeded=True, is_mentioned=True,
+        _result(
+            audit, provider="claude", query_succeeded=True, is_mentioned=True,
             sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
         )
-        LLMRankingResultFactory(
-            audit=audit, provider="claude", query_succeeded=True, is_mentioned=True,
+        _result(
+            audit, provider="claude", query_succeeded=True, is_mentioned=True,
             sentiment=LLMRankingResult.SENTIMENT_NEGATIVE,
         )
-        LLMRankingResultFactory(
-            audit=audit, provider="gpt4", query_succeeded=True, is_mentioned=True,
+        _result(
+            audit, provider="gpt4", query_succeeded=True, is_mentioned=True,
             sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
         )
         out = build_for_user(user)["sentiment_by_provider"]
@@ -108,8 +125,8 @@ class TestBuildForUser:
         user = UserFactory()
         audit = _completed_audit(user)
         for _ in range(6):
-            LLMRankingResultFactory(
-                audit=audit, query_succeeded=True, is_mentioned=True,
+            _result(
+                audit, query_succeeded=True, is_mentioned=True,
                 sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
                 mention_context="great onboarding flow", confidence_score=90,
             )
@@ -124,14 +141,19 @@ class TestBuildForUser:
         user = UserFactory()
         audit = _completed_audit(user)
         for _ in range(6):
-            LLMRankingResultFactory(
-                audit=audit, query_succeeded=True, is_mentioned=True,
+            _result(
+                audit, query_succeeded=True, is_mentioned=True,
                 sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
                 mention_context="great onboarding flow", confidence_score=90,
             )
+        # The model labels themes and assigns quote numbers; the count is
+        # computed from those assignments, never taken from the model.
         fake_result = MagicMock(
             succeeded=True,
-            text='[{"label": "Smooth onboarding", "count": 6, "sample": "great onboarding flow"}]',
+            text=(
+                '[{"label": "Smooth onboarding", "quotes": [1, 2, 3, 4, 5, 6], '
+                '"sample": "great onboarding flow"}]'
+            ),
             error="",
         )
         fake_provider = MagicMock(is_configured=MagicMock(return_value=True))
@@ -150,8 +172,8 @@ class TestBuildForUser:
         user = UserFactory()
         audit = _completed_audit(user)
         for _ in range(6):
-            LLMRankingResultFactory(
-                audit=audit, query_succeeded=True, is_mentioned=True,
+            _result(
+                audit, query_succeeded=True, is_mentioned=True,
                 sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
                 mention_context="great onboarding flow", confidence_score=90,
             )
@@ -161,12 +183,12 @@ class TestBuildForUser:
     def test_prompts_filter_narrows_matrix(self):
         user = UserFactory()
         audit = _completed_audit(user)
-        LLMRankingResultFactory(
-            audit=audit, prompt="A", provider="claude",
+        _result(
+            audit, prompt="A", provider="claude",
             query_succeeded=True, is_mentioned=True, mention_rank=1,
         )
-        LLMRankingResultFactory(
-            audit=audit, prompt="B", provider="claude",
+        _result(
+            audit, prompt="B", provider="claude",
             query_succeeded=True, is_mentioned=False,
         )
         with patch("apps.llm_ranking.providers.get_provider", return_value=None):
@@ -178,8 +200,8 @@ class TestBuildForUser:
         user = UserFactory()
         audit = _completed_audit(user)
         for _ in range(3):
-            LLMRankingResultFactory(audit=audit, prompt="popular", query_succeeded=True)
-        LLMRankingResultFactory(audit=audit, prompt="rare", query_succeeded=True)
+            _result(audit, prompt="popular", query_succeeded=True)
+        _result(audit, prompt="rare", query_succeeded=True)
         with patch("apps.llm_ranking.providers.get_provider", return_value=None):
             available = build_for_user(user)["available_prompts"]
         labels = [p["label"] for p in available]
@@ -190,8 +212,8 @@ class TestBuildForUser:
         user = UserFactory()
         audit = _completed_audit(user)
         for i in range(MAX_PROMPTS + 5):
-            LLMRankingResultFactory(
-                audit=audit, prompt=f"prompt-{i}", provider="claude",
+            _result(
+                audit, prompt=f"prompt-{i}", provider="claude",
                 query_succeeded=True, is_mentioned=True, mention_rank=1,
             )
         with patch(

@@ -117,7 +117,29 @@ class TestRunNowRefusal:
             industry="SaaS", next_run_at=timezone.now(),
         )
 
-    def test_run_now_refuses_without_saved_prompts(self, auth_client):
+    def test_run_now_refuses_without_ai_provider(self, auth_client, settings):
+        # With no engine configured nothing can be asked: the run is refused
+        # with 409 and names the missing keys instead of queuing on Claude.
+        for key in (
+            "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
+            "PERPLEXITY_API_KEY", "XAI_API_KEY", "DEEPSEEK_API_KEY",
+        ):
+            setattr(settings, key, "")
+        client, user, website = auth_client
+        self._make_schedule(user, website)
+        _save(website, PromptFactory(text="what is the best crm?"))
+        response = client.post(f"/api/v1/llm-ranking/{website.id}/schedule/run-now/")
+        assert response.status_code == 409
+        body = response.json()
+        body = body.get("data", body)
+        assert body["error"] == "no_llm_provider_configured"
+        assert "ANTHROPIC_API_KEY" in body["missing"]
+        from apps.llm_ranking.models import LLMRankingAudit
+        assert not LLMRankingAudit.objects.filter(website=website).exists()
+
+    def test_run_now_refuses_without_saved_prompts(self, auth_client, settings):
+        # An engine is configured, so the refusal is about the prompt list.
+        settings.ANTHROPIC_API_KEY = "test-key"
         client, user, website = auth_client
         self._make_schedule(user, website)
         response = client.post(f"/api/v1/llm-ranking/{website.id}/schedule/run-now/")
@@ -139,7 +161,8 @@ class TestRunNowRefusal:
         body = body.get("data", body)
         assert body["code"] == "no_saved_prompts"
 
-    def test_run_now_uses_saved_prompts(self, auth_client):
+    def test_run_now_uses_saved_prompts(self, auth_client, settings):
+        settings.ANTHROPIC_API_KEY = "test-key"
         client, user, website = auth_client
         self._make_schedule(user, website)
         prompt = PromptFactory(text="what is the best crm?")

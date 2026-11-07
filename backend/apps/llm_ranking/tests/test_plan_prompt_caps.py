@@ -1,7 +1,8 @@
 """
-Asserts the per-plan ``max_prompts_per_audit`` cap is enforced both
-in ``max_prompts_for_user`` (the lookup) and in
-``LLMRankingService.generate_prompts`` (the consumer).
+Asserts the per-plan ``max_prompts_per_audit`` cap resolved by
+``max_prompts_for_user``. Audits run the saved prompt list, which
+``gather_saved_prompts`` caps with this lookup (covered in
+test_saved_prompt_audits).
 """
 from unittest.mock import MagicMock
 
@@ -44,6 +45,10 @@ class TestMaxPromptsForUser:
 
     def test_no_subscription_falls_back_to_free(self):
         user = MagicMock()
+        # The user belongs to no organization (org members resolve through
+        # the org's plan instead): the membership lookup finds nothing.
+        del user._org_or_none_cache
+        user.org_memberships.select_related.return_value.order_by.return_value.first.return_value = None
         # Simulate the OneToOne reverse relation raising
         # Subscription.DoesNotExist when accessed.
         type(user).subscription = property(
@@ -61,53 +66,3 @@ class TestMaxPromptsForUser:
     def test_legacy_starter_resolves_to_pro_limit(self):
         # Subscriptions on the old "starter" plan should keep working.
         assert max_prompts_for_user(_FakeUser(Plan.STARTER)) == 15
-
-
-@pytest.mark.django_db
-class TestGeneratePromptsRespectsPlan:
-    """generate_prompts must cap its returned list at the user's plan limit."""
-
-    def test_pro_returns_at_most_15(self, settings):
-        # Disable the Claude variants path so the test stays hermetic
-        # — the deterministic library alone produces > 15 prompts so we
-        # can verify the cap is the binding constraint.
-        settings.ANTHROPIC_API_KEY = ""
-
-        from apps.llm_ranking.services.ranking_service import LLMRankingService
-        prompts = LLMRankingService.generate_prompts(
-            business_name="Acme",
-            industry="SaaS analytics",
-            description="Acme builds growth analytics for SaaS teams.",
-            keywords=["analytics", "growth"],
-            user=_FakeUser(Plan.PRO),
-        )
-        assert len(prompts) <= 15
-        # Each prompt has the standard shape regardless of cap
-        assert all("text" in p and "type" in p for p in prompts)
-
-    def test_business_allows_more_than_pro(self, settings):
-        settings.ANTHROPIC_API_KEY = ""
-        from apps.llm_ranking.services.ranking_service import LLMRankingService
-        pro = LLMRankingService.generate_prompts(
-            business_name="Acme", industry="SaaS analytics",
-            description="Growth analytics.",
-            keywords=["analytics"],
-            user=_FakeUser(Plan.PRO),
-        )
-        business = LLMRankingService.generate_prompts(
-            business_name="Acme", industry="SaaS analytics",
-            description="Growth analytics.",
-            keywords=["analytics"],
-            user=_FakeUser(Plan.BUSINESS),
-        )
-        assert len(business) >= len(pro)
-        assert len(pro) <= 15
-
-    def test_no_user_defaults_to_pro_cap(self, settings):
-        settings.ANTHROPIC_API_KEY = ""
-        from apps.llm_ranking.services.ranking_service import LLMRankingService
-        prompts = LLMRankingService.generate_prompts(
-            business_name="Acme", industry="SaaS analytics",
-            description="x", keywords=["analytics"],
-        )
-        assert len(prompts) <= 15

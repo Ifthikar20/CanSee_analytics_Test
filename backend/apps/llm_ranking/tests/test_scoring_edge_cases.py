@@ -5,10 +5,13 @@ The happy paths are covered in ``test_services.py``. This file exercises
 boundary conditions: zero queries, all failures, all unanimous, single
 provider, mixed sentiment, and the Beta-Binomial / Wilson interactions.
 """
+import itertools
+
 import pytest
 
 from apps.llm_ranking.models import LLMRankingResult
 from apps.llm_ranking.services.ranking_service import (
+    SCORE_FIELDS,
     LLMRankingService,
     beta_binomial_mean,
     wilson_ci,
@@ -18,23 +21,34 @@ from apps.llm_ranking.tests.factories import (
     LLMRankingResultFactory,
 )
 
+# Each (audit, prompt_index, provider, model_id, run_id) cell is unique.
+_PROMPT_INDEX = itertools.count()
+
+
+def _result(audit, **kwargs):
+    kwargs.setdefault("prompt_index", next(_PROMPT_INDEX))
+    return LLMRankingResultFactory(audit=audit, **kwargs)
+
 
 @pytest.mark.django_db
 class TestComputeOverallScoreEdgeCases:
-    def test_no_results_returns_zeroed_metrics(self):
+    def test_no_results_returns_null_metrics(self):
+        # Nothing was measured, so every metric is None — a 0 would read
+        # as a measured zero.
         scores = LLMRankingService.compute_overall_score([])
-        assert scores["overall_score"] == 0
-        assert scores["mention_rate"] == 0.0
-        assert scores["mention_rate_smoothed"] == 0.0
-        assert scores["avg_mention_rank"] == 0.0
-        assert scores["mention_rate_ci_lower"] == 0.0
-        assert scores["mention_rate_ci_upper"] == 0.0
+        assert scores == dict.fromkeys(SCORE_FIELDS)
+        assert scores["overall_score"] is None
+        assert scores["mention_rate"] is None
+        assert scores["mention_rate_smoothed"] is None
+        assert scores["avg_mention_rank"] is None
+        assert scores["mention_rate_ci_lower"] is None
+        assert scores["mention_rate_ci_upper"] is None
 
     def test_all_failed_queries_dont_crash(self):
         audit = LLMRankingAuditFactory()
         results = [
-            LLMRankingResultFactory(
-                audit=audit, provider="claude",
+            _result(
+                audit, provider="claude",
                 query_succeeded=False, is_mentioned=False,
                 sentiment=LLMRankingResult.SENTIMENT_NOT_MENTIONED,
                 mention_rank=None,
@@ -42,27 +56,28 @@ class TestComputeOverallScoreEdgeCases:
             for _ in range(4)
         ]
         scores = LLMRankingService.compute_overall_score(results)
-        assert scores["mention_rate"] == 0.0
-        assert scores["mention_rate_smoothed"] >= 0.0
-        # No succeeded calls means no provider coverage bonus.
-        assert scores["overall_score"] == 0
+        # No answered query means nothing to score: every metric is None
+        # (the run itself is marked FAILED by finalise_audit).
+        assert scores == dict.fromkeys(SCORE_FIELDS)
 
     def test_unanimous_top_rank_caps_at_100(self):
         audit = LLMRankingAuditFactory()
         results = []
         for prov in ("claude", "gpt4", "gemini", "perplexity"):
             for _ in range(5):
-                results.append(LLMRankingResultFactory(
-                    audit=audit, provider=prov,
+                results.append(_result(
+                    audit, provider=prov,
                     query_succeeded=True, is_mentioned=True, mention_rank=1,
                     sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
                 ))
         scores = LLMRankingService.compute_overall_score(results)
         assert scores["overall_score"] <= 100
-        # 20 mentions / 20 queries → smoothed ≈ (2+20)/(10+20) = 73%, but
-        # the score is bounded at 100 and the rank/sentiment/coverage bonuses
-        # all max out — so the total should be at the cap.
-        assert scores["overall_score"] >= 90
+        # 20 mentions / 20 queries → smoothed = (2+20)/(10+20) = 73.3%. The
+        # rank (30), sentiment (20) and coverage (10) components all max
+        # out, so the score is 0.4 * 73.3 + 60 = 89.3 → 89. Smoothing keeps
+        # even a unanimous 20-query run below a perfect 100.
+        assert scores["mention_rate_smoothed"] == 73.3
+        assert scores["overall_score"] == 89
         # The Wilson CI on a unanimous proportion has lower < 1 ≤ upper = 100.
         assert scores["mention_rate_ci_upper"] == 100.0
         assert 0 < scores["mention_rate_ci_lower"] < 100
@@ -76,8 +91,8 @@ class TestComputeOverallScoreEdgeCases:
             + [LLMRankingResult.SENTIMENT_NEGATIVE] * 2
         )
         results = [
-            LLMRankingResultFactory(
-                audit=audit, provider="claude",
+            _result(
+                audit, provider="claude",
                 query_succeeded=True, is_mentioned=True, mention_rank=1,
                 sentiment=s,
             )
@@ -92,8 +107,8 @@ class TestComputeOverallScoreEdgeCases:
     def test_only_one_provider_succeeded_caps_coverage(self):
         audit = LLMRankingAuditFactory()
         results = [
-            LLMRankingResultFactory(
-                audit=audit, provider="claude",
+            _result(
+                audit, provider="claude",
                 query_succeeded=True, is_mentioned=True, mention_rank=1,
                 sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
             )
@@ -106,8 +121,8 @@ class TestComputeOverallScoreEdgeCases:
         full_coverage = []
         for prov in ("claude", "gpt4", "gemini", "perplexity"):
             for _ in range(5):
-                full_coverage.append(LLMRankingResultFactory(
-                    audit=audit2, provider=prov,
+                full_coverage.append(_result(
+                    audit2, provider=prov,
                     query_succeeded=True, is_mentioned=True, mention_rank=1,
                     sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
                 ))
@@ -117,13 +132,13 @@ class TestComputeOverallScoreEdgeCases:
     def test_smoothed_pulls_small_samples_toward_prior(self):
         """1/1 should not score the same as 100/100 — smoothing differentiates."""
         audit = LLMRankingAuditFactory()
-        small = [LLMRankingResultFactory(
-            audit=audit, provider="claude",
+        small = [_result(
+            audit, provider="claude",
             query_succeeded=True, is_mentioned=True, mention_rank=1,
             sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
         )]
-        big = [LLMRankingResultFactory(
-            audit=audit, provider="claude",
+        big = [_result(
+            audit, provider="claude",
             query_succeeded=True, is_mentioned=True, mention_rank=1,
             sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
         ) for _ in range(50)]
@@ -138,13 +153,13 @@ class TestComputeOverallScoreEdgeCases:
         """Mentions without a rank don't poison the avg_rank calculation."""
         audit = LLMRankingAuditFactory()
         results = [
-            LLMRankingResultFactory(
-                audit=audit, provider="claude",
+            _result(
+                audit, provider="claude",
                 query_succeeded=True, is_mentioned=True, mention_rank=1,
                 sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
             ),
-            LLMRankingResultFactory(
-                audit=audit, provider="gpt4",
+            _result(
+                audit, provider="gpt4",
                 query_succeeded=True, is_mentioned=True, mention_rank=None,
                 sentiment=LLMRankingResult.SENTIMENT_POSITIVE,
             ),

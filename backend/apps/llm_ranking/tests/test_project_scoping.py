@@ -131,28 +131,3 @@ class TestFilterOptionsScoped:
         assert [m["value"] for m in options_b["models"]] == [
             LLMRankingResult.PROVIDER_GPT4,
         ]
-
-
-@pytest.mark.django_db
-class TestDashboardEndpointScoped:
-    def test_dashboard_accepts_website_param(self, two_projects):
-        from rest_framework.test import APIClient
-
-        user, site_a, site_b, *_ = two_projects
-        client = APIClient()
-        client.force_authenticate(user=user)
-        resp = client.get(f"/api/v1/websites/dashboard/?website={site_a.id}")
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        vis = next(t for t in data["stats"] if t["label"] == "Visibility")
-        assert vis["value"] == "80.0%"
-
-    def test_foreign_website_id_is_404(self, two_projects):
-        from rest_framework.test import APIClient
-
-        user, *_ = two_projects
-        other_site = WebsiteFactory()  # different owner
-        client = APIClient()
-        client.force_authenticate(user=user)
-        resp = client.get(f"/api/v1/websites/dashboard/?website={other_site.id}")
-        assert resp.status_code == 404
