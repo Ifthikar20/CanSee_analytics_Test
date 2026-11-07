@@ -6,6 +6,12 @@ from apps.accounts.tests.factories import UserFactory
 
 @pytest.mark.django_db
 class TestRegisterView:
+    # Public sign-up is closed by default (SIGNUPS_ENABLED=False in
+    # config/settings/base.py); these exercise the endpoint with it open.
+    @pytest.fixture(autouse=True)
+    def _signups_open(self, settings):
+        settings.SIGNUPS_ENABLED = True
+
     def test_register_success(self):
         client = APIClient()
         response = client.post(
@@ -32,6 +38,20 @@ class TestRegisterView:
             format="json",
         )
         assert response.status_code == 400
+
+    def test_register_refused_while_signups_closed(self, settings):
+        settings.SIGNUPS_ENABLED = False
+        response = APIClient().post(
+            "/api/v1/auth/register/",
+            {
+                "email": "closed@test.com",
+                "password": "SecurePass123!",
+                "full_name": "New User",
+            },
+            format="json",
+        )
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "signups_closed"
 
 
 @pytest.mark.django_db

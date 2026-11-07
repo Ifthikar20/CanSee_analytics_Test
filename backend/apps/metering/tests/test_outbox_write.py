@@ -79,4 +79,5 @@ class TestOutboxWrite:
         self._record(user, model_name="claude-haiku-4-5",
                      input_tokens=1_000_000, output_tokens=0)
         row = AITokenUsage.objects.get()
-        assert row.estimated_cost_usd == Decimal("0.800000")
+        # Haiku 4.5 input is $1.00 per million tokens (core/ai_tracking.py).
+        assert row.estimated_cost_usd == Decimal("1.000000")

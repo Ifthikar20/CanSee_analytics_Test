@@ -61,12 +61,17 @@ class TestRefreshCookieHardening:
     def test_name_path_and_lifetime_match_the_client(self, debug):
         # ftb-ui posts to /api/v1/auth/refresh/ with an empty body and
         # withCredentials, so the cookie must be readable across the whole
-        # path. The 7-day max_age matches SIMPLE_JWT REFRESH_TOKEN_LIFETIME.
+        # path. max_age follows SIMPLE_JWT REFRESH_TOKEN_LIFETIME (60 days):
+        # the cookie must outlive the token, never cap the session below it.
+        from django.conf import settings
+
         with override_settings(DEBUG=debug):
             cookie = _refresh_cookie_settings()
+        lifetime = settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"]
         assert cookie["key"] == "refresh_token"
         assert cookie["path"] == "/"
-        assert cookie["max_age"] == 7 * 24 * 60 * 60
+        assert cookie["max_age"] == int(lifetime.total_seconds())
+        assert cookie["max_age"] == 60 * 24 * 60 * 60
 
 
 class TestSettingsAreReadAtCallTime:

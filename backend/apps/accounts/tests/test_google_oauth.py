@@ -3,6 +3,10 @@
 Public sign-up is closed: Google sign-in only works for emails that
 already have a Cansee account. Unknown emails are rejected with 403
 and no account is created.
+
+The identity comes from the signed id_token in Google's token response
+(oauth_service._verify_id_token checks signature, audience and issuer),
+not from the userinfo endpoint, so the verifier is stubbed here.
 """
 
 from unittest.mock import MagicMock, patch
@@ -27,13 +31,18 @@ def _stub_response(payload):
 def _google_mocks(userinfo):
     token_post = patch.object(
         oauth_service.requests, "post",
-        return_value=_stub_response({"access_token": "google-at"}),
+        return_value=_stub_response(
+            {"access_token": "google-at", "id_token": "signed-id-token"}
+        ),
     )
-    userinfo_get = patch.object(
-        oauth_service.requests, "get",
-        return_value=_stub_response(userinfo),
-    )
-    return token_post, userinfo_get
+    claims = {
+        "iss": "https://accounts.google.com",
+        "sub": f"google-sub-{userinfo['email']}",
+        "email_verified": True,
+        **userinfo,
+    }
+    verify = patch.object(oauth_service, "_verify_id_token", return_value=claims)
+    return token_post, verify
 
 
 @pytest.mark.django_db
@@ -45,7 +54,7 @@ class TestGoogleOAuthView:
         token_post, userinfo_get = _google_mocks(
             {"email": "existing.google@test.com", "name": "Existing"}
         )
-        with token_post as mock_post, userinfo_get:
+        with token_post as mock_post, userinfo_get as mock_verify:
             response = APIClient().post(
                 "/api/v1/auth/google/",
                 {"code": "auth-code", "redirect_uri": REDIRECT_URI},
@@ -67,6 +76,8 @@ class TestGoogleOAuthView:
         assert data["code"] == "auth-code"
         assert data["redirect_uri"] == REDIRECT_URI
         assert data["grant_type"] == "authorization_code"
+        # The identity was taken from the verified id_token.
+        mock_verify.assert_called_once_with("signed-id-token")
 
     def test_unknown_google_email_rejected(self):
         token_post, userinfo_get = _google_mocks(

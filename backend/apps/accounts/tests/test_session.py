@@ -27,7 +27,12 @@ class TestSessionLimits:
         settings.PAYWALL_ENABLED = True
         client, user = auth_client
         data = client.get(SESSION_URL).json()["data"]
-        assert data["limits"] == {"projects": 1}
+        assert data["limits"] == {
+            "projects": 1,
+            "tracked_prompts": {"limit": 5, "used": 0},
+            "autopilot": False,
+            "sms_digest": False,
+        }
         assert data["subscription"]["plan"] == "free"
 
     def test_trialing_pro_capped_at_free_allowance(self, auth_client, settings):
@@ -42,7 +47,14 @@ class TestSessionLimits:
         )
         data = client.get(SESSION_URL).json()["data"]
         assert data["subscription"]["is_trialing"] is True
-        assert data["limits"] == {"projects": 1}
+        # Trialing grants the Pro feature set; only projects stay at the
+        # free allowance until the subscription is ACTIVE.
+        assert data["limits"] == {
+            "projects": 1,
+            "tracked_prompts": {"limit": 100, "used": 0},
+            "autopilot": True,
+            "sms_digest": True,
+        }
 
     def test_active_pro_gets_five(self, auth_client, settings):
         settings.PAYWALL_ENABLED = True
@@ -55,10 +67,20 @@ class TestSessionLimits:
             current_period_end=timezone.now() + timedelta(days=30),
         )
         data = client.get(SESSION_URL).json()["data"]
-        assert data["limits"] == {"projects": 5}
+        assert data["limits"] == {
+            "projects": 5,
+            "tracked_prompts": {"limit": 100, "used": 0},
+            "autopilot": True,
+            "sms_digest": True,
+        }
 
     def test_paywall_off_unlimited(self, auth_client, settings):
         settings.PAYWALL_ENABLED = False
         client, user = auth_client
         data = client.get(SESSION_URL).json()["data"]
-        assert data["limits"] == {"projects": -1}
+        assert data["limits"] == {
+            "projects": -1,
+            "tracked_prompts": {"limit": -1, "used": 0},
+            "autopilot": True,
+            "sms_digest": True,
+        }

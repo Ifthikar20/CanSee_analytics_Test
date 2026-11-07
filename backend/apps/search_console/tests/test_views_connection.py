@@ -81,8 +81,9 @@ class TestOAuthCallback:
             )
 
         assert response.status_code == 302
+        # GSC is connected from Settings > Connections (ed50e82).
         assert response["Location"] == (
-            f"http://frontend.test/app/integrations?gsc=connected&website_id={website.id}"
+            f"http://frontend.test/settings/connections?gsc=connected&website_id={website.id}"
         )
         integration = Integration.objects.get(website=website, type="gsc")
         assert integration.access_token == "at"

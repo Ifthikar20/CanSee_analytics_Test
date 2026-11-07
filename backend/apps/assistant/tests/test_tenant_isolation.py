@@ -11,11 +11,14 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.accounts.tests.factories import UserFactory
+from apps.assistant.services.context_builder import FactBlock
+from apps.rag.services.retriever import RetrievalHits
 from apps.websites.tests.factories import WebsiteFactory
 
 ASK = "/api/v1/assistant/{wid}/ask/"
 CB = "apps.assistant.services.context_builder.build_fact_block"
-RET = "apps.rag.services.retriever.retrieve_context_block"
+RET = "apps.rag.services.retriever.retrieve"
+NO_FACTS = FactBlock(text="", grounded=False)
 GET_PROVIDER = "apps.llm_ranking.providers.get_provider"
 
 
@@ -36,7 +39,7 @@ class TestAssistantTenantIsolation:
         attacker = UserFactory()
         client = APIClient()
         client.force_authenticate(user=attacker)
-        with patch(CB, return_value=""), patch(RET, return_value=""), \
+        with patch(CB, return_value=NO_FACTS), patch(RET, return_value=RetrievalHits()), \
              patch(GET_PROVIDER, return_value=_CapturingProvider()):
             resp = client.post(
                 ASK.format(wid=victim_site.id),
@@ -53,7 +56,7 @@ class TestAssistantTenantIsolation:
         client = APIClient()
         client.force_authenticate(user=user)
         fake = _CapturingProvider()
-        with patch(CB, return_value=""), patch(RET, return_value=""), \
+        with patch(CB, return_value=NO_FACTS), patch(RET, return_value=RetrievalHits()), \
              patch(GET_PROVIDER, return_value=fake):
             resp = client.post(
                 ASK.format(wid=website.id),

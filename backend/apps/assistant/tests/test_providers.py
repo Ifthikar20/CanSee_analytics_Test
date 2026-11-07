@@ -46,13 +46,22 @@ class TestRouting:
 @pytest.mark.django_db
 class TestProvidersAreScopedAndSafe:
     def test_every_provider_runs_clean_on_an_empty_account(self):
-        """No provider may raise on a brand-new website with no data."""
+        """No provider may raise on a brand-new website with no data.
+
+        A provider returns data lines, or one sentence (a str) saying the
+        slice has no data yet; on an empty account only AI usage, which
+        always has a period total, returns lines.
+        """
         user = UserFactory()
         website = WebsiteFactory(user=user)
         for provider in P.PROVIDERS:
-            lines = provider.fn(user, website)
-            assert isinstance(lines, list)
-            assert all(isinstance(x, str) for x in lines)
+            out = provider.fn(user, website)
+            if provider.key == "usage":
+                assert isinstance(out, list) and out
+                assert all(isinstance(x, str) for x in out)
+            else:
+                assert isinstance(out, str), provider.key
+                assert out.strip(), provider.key
 
     def test_prompts_provider_only_sees_own_website(self):
         a_user = UserFactory()
@@ -62,7 +71,8 @@ class TestProvidersAreScopedAndSafe:
         BrandPrompt.objects.create(
             website=b_site, prompt=PromptFactory(text="competitor secret prompt"),
         )
-        lines = "\n".join(P.prompts_lines(a_user, a_site))
+        out = P.prompts_lines(a_user, a_site)
+        lines = out if isinstance(out, str) else "\n".join(out)
         assert "competitor secret prompt" not in lines
 
     def test_build_sections_survives_a_broken_provider(self, monkeypatch):
@@ -77,7 +87,8 @@ class TestProvidersAreScopedAndSafe:
         monkeypatch.setattr(P, "PROVIDERS", (broken,) + P.PROVIDERS[1:])
         # Must not raise; the failed section is simply absent.
         sections = P.build_sections(user, website, "how is my traffic?")
-        assert all(label != "TRAFFIC" for label, _ in sections)
+        assert sections
+        assert all(section.label != "TRAFFIC" for section in sections)
 
 
 @pytest.mark.django_db
@@ -89,7 +100,9 @@ class TestContextBlock:
             website=website, prompt=PromptFactory(text="best payment platform"),
         )
         block = build_fact_block(user, website, question="how are my prompts doing?")
-        assert "best payment platform" in block or "PROMPT" in block
+        assert "best payment platform" in block.text or "PROMPT" in block.text
+        # The saved prompt is real data, so the block counts as grounded.
+        assert block.grounded is True
 
     def test_block_is_bounded(self):
         user = UserFactory()
@@ -99,4 +112,4 @@ class TestContextBlock:
                 website=website, prompt=PromptFactory(text=f"prompt number {i} " + "x" * 200),
             )
         block = build_fact_block(user, website, question="show me my prompts")
-        assert len(block) <= 9000
+        assert len(block.text) <= 9000

@@ -60,8 +60,12 @@ class TestScanEndpoint:
             description_short="Acme does X.",
             competitors=[{"name": "Mixpanel", "domain": "mixpanel.com"}],
         )
+        # The serializer's SSRF guard resolves the host and fails closed
+        # without DNS, so resolution is pinned to a public address.
         with patch("apps.onboarding.api.v1.views.run_onboarding_scan",
-                   return_value=fake):
+                   return_value=fake), \
+             patch("core.validators.url_safety.socket.getaddrinfo",
+                   return_value=[(2, 1, 0, "", ("93.184.216.34", 0))]):
             resp = client.post("/api/v1/onboarding/scan/",
                                {"url": "https://acme.com"}, format="json")
         assert resp.status_code == 200
@@ -89,11 +93,14 @@ class TestSaveEndpoint:
 
     def test_creates_website(self, auth_client):
         client, user = auth_client
-        # WebsiteService is imported inside the view (import cycle), so
-        # it must be patched at its source module.
-        with patch(
-            "apps.websites.services.website_service.WebsiteService"
-        ) as ws:
+        from apps.websites.services.website_service import WebsiteService
+
+        # Only create() is stubbed. The view's upsert lookup goes through
+        # WebsiteService.accessible_qs (a71db88); replacing the whole class
+        # made that lookup return a MagicMock, so the view took the update
+        # branch and rendered MagicMock fields, which DRF's JSON encoder
+        # expands through .tolist() without end until memory runs out.
+        with patch.object(WebsiteService, "create") as create:
             class _Fake:
                 id = "00000000-0000-0000-0000-000000000001"
                 name = "Acme"
@@ -101,7 +108,7 @@ class TestSaveEndpoint:
                 description = ""
                 topics = []
                 def save(self): pass
-            ws.create.return_value = _Fake()
+            create.return_value = _Fake()
             with patch("core.validators.url_safety.socket.getaddrinfo",
                        return_value=[(2, 1, 0, "", ("93.184.216.34", 0))]):
                 resp = client.post("/api/v1/onboarding/save/", {
@@ -115,7 +122,12 @@ class TestSaveEndpoint:
         # EnvelopeRenderer wraps every success body as {success, data}.
         body = resp.json()["data"]
         assert body["name"] == "Acme"
-        ws.create.assert_called_once()
+        assert body["website_id"] == "00000000-0000-0000-0000-000000000001"
+        create.assert_called_once()
+        kwargs = create.call_args.kwargs
+        assert kwargs["user"] == user
+        assert kwargs["name"] == "Acme"
+        assert kwargs["industry"] == "SaaS"
 
     def test_enforces_project_limit(self, auth_client, settings):
         """Onboarding /save/ must not bypass the plan's project cap."""

@@ -1,7 +1,15 @@
 import pytest
+from django.test import RequestFactory
 
 from apps.accounts.services.auth_service import AuthService
 from apps.accounts.tests.factories import UserFactory
+from core.exceptions import LoginRefused
+
+
+def _login_request():
+    # django-axes (AxesStandaloneBackend) throttles by request, so every
+    # password sign-in must carry one; LoginView passes its own.
+    return RequestFactory().post("/api/v1/auth/login/", REMOTE_ADDR="127.0.0.1")
 
 
 @pytest.mark.django_db
@@ -35,6 +43,7 @@ class TestAuthService:
             password="MyPass123!",
             ip_address="127.0.0.1",
             user_agent="test-agent",
+            request=_login_request(),
         )
 
         assert "access" in result
@@ -43,26 +52,32 @@ class TestAuthService:
 
     def test_login_wrong_password_raises(self):
         UserFactory(email="wrong@test.com", is_email_verified=True)
-        with pytest.raises(ValueError, match="Invalid"):
+        with pytest.raises(LoginRefused, match="Incorrect email or password") as exc:
             AuthService.login(
                 email="wrong@test.com",
                 password="WrongPassword",
                 ip_address="127.0.0.1",
                 user_agent="test-agent",
+                request=_login_request(),
             )
+        assert exc.value.code == "invalid_credentials"
+        assert exc.value.status_code == 400
 
     def test_login_unverified_email_raises(self):
         user = UserFactory(email="unverified@test.com", is_email_verified=False)
         user.set_password("Pass123!")
         user.save()
 
-        with pytest.raises(ValueError, match="verify your email"):
+        with pytest.raises(LoginRefused, match="verify your email") as exc:
             AuthService.login(
                 email="unverified@test.com",
                 password="Pass123!",
                 ip_address="127.0.0.1",
                 user_agent="test-agent",
+                request=_login_request(),
             )
+        assert exc.value.code == "email_not_verified"
+        assert exc.value.status_code == 403
 
     def test_change_password_success(self):
         user = UserFactory(email="change@test.com")

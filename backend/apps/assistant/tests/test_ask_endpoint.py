@@ -2,6 +2,10 @@
 
 Hermetic: the provider and RAG retrieval are patched so no LLM/embedding
 network call happens.
+
+build_fact_block returns a FactBlock(text, grounded) and the orchestrator
+retrieves through retriever.retrieve; with no provider configured /ask/
+answers 503 assistant_not_configured and stores nothing (3320cdf).
 """
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -10,12 +14,17 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.accounts.tests.factories import UserFactory
+from apps.assistant.models import AssistantConversation, AssistantMessage
+from apps.assistant.services.context_builder import FactBlock
+from apps.assistant.services.orchestrator import NOT_CONFIGURED_MESSAGE
+from apps.rag.services.retriever import RetrievalHits
 from apps.websites.tests.factories import WebsiteFactory
 
 ASK = "/api/v1/assistant/{wid}/ask/"
 
 CB = "apps.assistant.services.context_builder.build_fact_block"
-RET = "apps.rag.services.retriever.retrieve_context_block"
+RET = "apps.rag.services.retriever.retrieve"
+NO_FACTS = FactBlock(text="", grounded=False)
 GET_PROVIDER = "apps.llm_ranking.providers.get_provider"
 GET_SYNTH = "apps.llm_ranking.providers.get_synthesis_provider"
 
@@ -50,8 +59,8 @@ class TestAskEndpoint:
     def test_happy_path(self, auth):
         client, user, website = auth
         fake = _FakeProvider("**All good.**")
-        with patch(CB, return_value="LIVE FACTS"), \
-             patch(RET, return_value=""), \
+        with patch(CB, return_value=FactBlock(text="LIVE FACTS", grounded=True)), \
+             patch(RET, return_value=RetrievalHits()), \
              patch(GET_PROVIDER, return_value=fake):
             resp = client.post(
                 ASK.format(wid=website.id),
@@ -66,6 +75,7 @@ class TestAskEndpoint:
         assert kw["user"] == user
         assert kw["website"] == website
         assert kw["module"] == "assistant"
+        assert "LIVE FACTS" in fake.calls[0]["prompt"]
 
     def test_missing_question_is_400(self, auth):
         client, _u, website = auth
@@ -74,14 +84,20 @@ class TestAskEndpoint:
 
     def test_provider_unavailable(self, auth):
         client, _u, website = auth
-        with patch(CB, return_value=""), patch(RET, return_value=""), \
+        with patch(CB, return_value=NO_FACTS), patch(RET, return_value=RetrievalHits()), \
              patch(GET_PROVIDER, return_value=None), \
              patch(GET_SYNTH, return_value=None):
             resp = client.post(
                 ASK.format(wid=website.id), {"question": "hi"}, format="json",
             )
-        assert resp.status_code == 200
-        assert "No AI provider" in resp.json()["data"]["answer"]
+        # No canned answer: a plain 503 and nothing stored for the turn.
+        assert resp.status_code == 503
+        assert resp.json()["error"] == {
+            "code": "assistant_not_configured",
+            "message": NOT_CONFIGURED_MESSAGE,
+        }
+        assert not AssistantConversation.objects.filter(website=website).exists()
+        assert not AssistantMessage.objects.exists()
 
     def test_rate_limited(self, auth):
         client, _u, website = auth
@@ -95,7 +111,7 @@ class TestAskEndpoint:
     def test_history_is_accepted(self, auth):
         client, _u, website = auth
         fake = _FakeProvider()
-        with patch(CB, return_value=""), patch(RET, return_value=""), \
+        with patch(CB, return_value=NO_FACTS), patch(RET, return_value=RetrievalHits()), \
              patch(GET_PROVIDER, return_value=fake):
             resp = client.post(
                 ASK.format(wid=website.id),
