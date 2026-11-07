@@ -41,14 +41,14 @@ From this repository, with the two repositories side by side:
 scripts/run-backend-tests.sh ../CanSee_analytics_App
 ```
 
-That copies the tests in, then runs each app's tests in turn (the whole suite
+That mirrors the tests in, then runs each app's tests in turn (the whole suite
 in one process can run out of memory on small machines). To run part of it:
 
 ```bash
 scripts/run-backend-tests.sh ../CanSee_analytics_App apps/search_gap/tests -x
 ```
 
-To copy the tests without running them, for example to work on them from the
+To mirror the tests without running them, for example to work on them from the
 backend checkout:
 
 ```bash
@@ -76,20 +76,17 @@ copies.
 
 ## Changing tests
 
-Edit tests here, not in the backend checkout: copies made by the sync script
-are overwritten on the next sync. If you do edit them in the backend checkout,
-copy them back before committing here.
+Edit tests here, not in the app checkouts. The sync scripts mirror this
+repository into a checkout: they delete the checkout's test folders (and the
+backend's root `conftest.py`) and copy this repository's versions in, so a test
+deleted here disappears there too. Any edit made in a checkout is lost on the
+next sync. The scripts refuse to run if any of those files are tracked by the
+app repository.
 
 ## Status
 
-`backend/` holds two sets of tests:
+Against the backend and UI on `feature/November-26` (2026-11-07):
 
-- The suite restored from the last backend commit that tracked it (the
-  parent of `c2d7892`, early September 2026), plus tests added since. About
-  127 of these fail because they predate later backend changes; see
-  [docs/KNOWN_FAILURES.md](docs/KNOWN_FAILURES.md).
-- Tests that were only on a local machine, added in `e6690fc`, including
-  the `agent`, `autopilot`, `boards`, `insights` and `prompt_box` apps and
-  new `search_gap`, `billing` and `web_analytics` tests. Several of these
-  apps exist only on the backend branch `agent-workspace`, so run these
-  tests against a checkout that includes that work.
+- Backend: 3789 passed, 6 failed. The 6 failures are real backend bugs,
+  listed in [docs/KNOWN_FAILURES.md](docs/KNOWN_FAILURES.md).
+- UI: 2434 passed, 0 failed.
