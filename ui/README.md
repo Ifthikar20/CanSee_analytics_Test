@@ -1,10 +1,17 @@
 # UI tests
 
-Tests for [Cansee_analytics_UI_APP](https://github.com/Ifthikar20/Cansee_analytics_UI_APP).
+Vitest suite for [Cansee_analytics_UI_APP](https://github.com/Ifthikar20/Cansee_analytics_UI_APP).
 
-The UI has no test runner yet. The plan is Vitest, with unit tests for
-`src/lib/gap.js`, `src/lib/engines.js` and the router redirect table first.
+Files mirror the UI repository's paths (for example
+`ui/src/lib/charts/__tests__/format.spec.js` tests `src/lib/charts/format.js`).
+Specs import the code they test by relative path, so they run from inside a
+UI checkout: `scripts/run-ui-tests.sh ../Cansee_analytics_UI_APP` copies them
+in and runs Vitest.
 
-Files here will mirror the UI repository's paths (for example
-`ui/src/lib/gap.test.js` for `src/lib/gap.js`), following the same
-copy-in approach as `backend/`.
+- `**/__tests__/*.spec.js`: the specs
+- `**/__tests__/__fixtures__/`: shared test data
+- `src/test/setup.js`: Vitest setup, referenced by the UI repo's
+  `vitest.config.js`
+
+The UI repo keeps `vitest.config.js`, the `test` scripts in `package.json` and
+the test dependencies.

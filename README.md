@@ -5,7 +5,7 @@ Test suites for Cansee, kept outside the application repositories.
 | Folder | Tests for | Runner |
 | --- | --- | --- |
 | `backend/` | [CanSee_analytics_App](https://github.com/Ifthikar20/CanSee_analytics_App) (Django, DRF, Celery) | pytest |
-| `ui/` | [Cansee_analytics_UI_APP](https://github.com/Ifthikar20/Cansee_analytics_UI_APP) (Vue 3, Vite) | Vitest (not set up yet) |
+| `ui/` | [Cansee_analytics_UI_APP](https://github.com/Ifthikar20/Cansee_analytics_UI_APP) (Vue 3, Vite) | Vitest |
 | `scripts/` | Helpers that copy a suite into an app checkout and run it | bash |
 | `docs/` | Known failures and notes | |
 
@@ -54,6 +54,25 @@ backend checkout:
 ```bash
 scripts/sync-backend-tests.sh ../CanSee_analytics_App
 ```
+
+## Running the UI tests
+
+Prerequisite: `npm ci` in the UI checkout (it keeps `vitest.config.js` and the
+test dependencies). Then, from this repository:
+
+```bash
+scripts/run-ui-tests.sh ../Cansee_analytics_UI_APP
+```
+
+Extra arguments go to Vitest, for example a folder:
+
+```bash
+scripts/run-ui-tests.sh ../Cansee_analytics_UI_APP src/lib/charts
+```
+
+`ui/` mirrors the UI repository's paths (`src/**/__tests__/*.spec.js`, their
+`__fixtures__/`, and `src/test/setup.js`); the UI's `.gitignore` ignores the
+copies.
 
 ## Changing tests
 
