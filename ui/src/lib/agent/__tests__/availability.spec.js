@@ -513,6 +513,37 @@ describe('the research plan: free prompt runs', () => {
     expect(researchPromptLimit(status({ engines: five, allowance: { show_usd: false } }))).toBe(5)
   })
 
+  it('reads only an explicit unlimited: false as a metered account', () => {
+    // A runs block without the flag (an older or partial answer) counts nothing.
+    const unknown = status({ engines: five, prompt_runs: { limit: 20, used: 18, reserved: 0, remaining: 2 } })
+    expect(promptRunsLeft(unknown)).toBeNull()
+    expect(researchFit(unknown).runsLeft).toBeNull()
+    expect(researchPromptLimit(unknown)).toBe(5)
+    expect(researchRunsLine(researchFit(unknown))).toBe('')
+    expect(promptRunsLeft(status({ prompt_runs: { unlimited: null, remaining: 2 } }))).toBeNull()
+    expect(promptRunsLeft(status({ prompt_runs: { unlimited: 'false', remaining: 2 } }))).toBeNull()
+  })
+
+  it('names the ceiling, not the runs, when the runs left pay for exactly what the ceiling allows', () => {
+    // 25 left, 5 engines: 5 prompts, the same as the ceiling (50 / 10, at most 5).
+    const exact = researchFit(free({ limit: 25, remaining: 25 }))
+    expect(exact.prompts).toBe(5)
+    expect(exact.limitedBy).toBe('ceiling')
+    expect(researchRunsLine(exact)).toBe('')
+    // One run fewer: the runs limit it to 4.
+    const fewer = researchFit(free({ limit: 25, remaining: 24 }))
+    expect(fewer.prompts).toBe(4)
+    expect(fewer.limitedBy).toBe('runs')
+  })
+
+  it('treats a bad runs count as unknown and a negative one as none', () => {
+    expect(promptRunsLeft(free({ remaining: 'x', limit: 20, used: 5 }))).toBe(15)
+    expect(promptRunsLeft(free({ remaining: true, limit: 20, used: 5 }))).toBe(15)
+    expect(promptRunsLeft(free({ remaining: -4 }))).toBe(0)
+    expect(promptRunsLeft(free({ remaining: 7.9 }))).toBe(7)
+    expect(promptRunsLeft(free({ remaining: '', limit: '', used: 1 }))).toBeNull()
+  })
+
   it('words what the runs left allow', () => {
     expect(researchRunsLine(researchFit(free({ remaining: 13 })))).toBe(
       'With 13 free prompt runs left and 5 AI engines set up, one research covers up to 2 prompts.'

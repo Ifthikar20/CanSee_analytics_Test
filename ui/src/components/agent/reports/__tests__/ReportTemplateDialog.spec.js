@@ -258,6 +258,22 @@ describe('ReportTemplateDialog', () => {
     )
   })
 
+  it('never keeps more than three competitors, even if a disabled box reports a change', async () => {
+    await open('competitor_comparison')
+    const boxes = choices('Competitors')
+    await check(boxes[0])
+    await check(boxes[2])
+    await check(boxes[3])
+    expect(boxes[1].disabled).toBe(true)
+    // A change event on the disabled fourth box (Coda) is ignored.
+    await check(boxes[1])
+    await check(boxes[0], false)
+    await submit()
+    expect(localStorage.getItem(draftKey)).toBe(
+      'Write a competitor comparison report for Notion.\nCompare with Obsidian (obsidian.md) and Roam (roamresearch.com).',
+    )
+  })
+
   it('says when the project tracks no competitors, and still opens', async () => {
     await open('competitor_comparison', { website: { ...WEBSITE, competitors: [] } })
     expect(dialog().textContent).toContain('This project tracks no competitors yet. Add them in Project settings.')

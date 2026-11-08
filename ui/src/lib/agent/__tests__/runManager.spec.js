@@ -315,6 +315,9 @@ describe('runManager', () => {
         expect(asked[0]).toBeGreaterThanOrEqual(OFFLINE_CHECK_MS)
         expect(asked[1] - asked[0]).toBeGreaterThanOrEqual(OFFLINE_CHECK_MS)
         expect(asked[2] - asked[1]).toBeGreaterThanOrEqual(OFFLINE_CHECK_MS)
+        // Exactly on the cadence: unreachable since t=0, sleeps of 5 s, so the
+        // server is asked at 30 s, 60 s and 90 s, never later.
+        expect(asked).toEqual([OFFLINE_CHECK_MS, 2 * OFFLINE_CHECK_MS, 3 * OFFLINE_CHECK_MS])
     })
 
     it('keeps trying when the web API cannot be asked either', async () => {
@@ -389,5 +392,65 @@ describe('runManager', () => {
             ['r1', { position: 2, ahead: 1, slots: 6 }],
             ['r1', null],
         ])
+    })
+})
+
+describe('runManager: when the offline clock starts again', () => {
+    function clocked() {
+        let t = 0
+        const ctx = setup({
+            now: () => t,
+            sleep: vi.fn(async () => {
+                t += 20000
+            }),
+        })
+        return ctx
+    }
+
+    it('a stream that opened restarts the clock even when it then drops offline', async () => {
+        const { manager, hooks, batches } = clocked()
+        // Offline at 0 s; at 20 s the stream opens, delivers, and drops as
+        // offline; at 40 s offline again (20 s since it last answered); then done.
+        hooks.openStream
+            .mockRejectedValueOnce(new OfflineError())
+            .mockImplementationOnce(async ({ onOpen, onEvent, onBytes }) => {
+                onOpen?.()
+                onBytes?.()
+                onEvent(ev(1))
+                throw new OfflineError()
+            })
+            .mockRejectedValueOnce(new OfflineError())
+            .mockImplementationOnce(streamOf([ev(2, 'run.completed')]))
+        await manager.attach({ id: 'r1', lastSeq: 0 }).done
+        expect(batches.flat()).toEqual([1, 2])
+        expect(hooks.onResync).not.toHaveBeenCalled()
+        expect(hooks.onClose).toHaveBeenCalledWith('r1', { terminal: true, error: null })
+    })
+
+    it('a server error between two offline spells restarts the clock', async () => {
+        const { manager, hooks } = clocked()
+        hooks.openStream
+            .mockRejectedValueOnce(new OfflineError())
+            .mockRejectedValueOnce(new TransportError('HTTP 502', { status: 502 }))
+            .mockRejectedValueOnce(new OfflineError())
+            .mockImplementationOnce(streamOf([ev(1, 'run.completed')]))
+        await manager.attach({ id: 'r1', lastSeq: 0 }).done
+        expect(hooks.onResync).not.toHaveBeenCalled()
+    })
+
+    it('maintenance between two offline spells does not restart the clock', async () => {
+        const { manager, hooks } = clocked()
+        hooks.onResync.mockResolvedValueOnce({ active: false, lastSeq: 0 })
+        hooks.openStream
+            .mockRejectedValueOnce(new OfflineError())
+            .mockRejectedValueOnce(new MaintenanceError('maintenance', { retryAfterMs: 1000 }))
+            .mockRejectedValueOnce(new OfflineError())
+            .mockImplementationOnce(streamOf([ev(1, 'run.completed')]))
+        await manager.attach({ id: 'r1', lastSeq: 0 }).done
+        // Unreachable since 0 s: at 40 s the server is asked and has ended the run.
+        expect(hooks.onResync).toHaveBeenCalledTimes(1)
+        expect(hooks.onResync).toHaveBeenCalledWith('r1', 'agent_unavailable')
+        expect(hooks.openStream).toHaveBeenCalledTimes(3)
+        expect(hooks.onClose).toHaveBeenCalledWith('r1', { terminal: true, error: null })
     })
 })

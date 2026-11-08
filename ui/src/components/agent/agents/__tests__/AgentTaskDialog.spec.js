@@ -616,6 +616,28 @@ describe('AgentTaskDialog task templates', () => {
     expect(askAgent.mock.calls[0][1]).toMatchObject({ websiteId: 'w2', agent: 'gap_analyst' })
   })
 
+  it('never hands a task over while the agent cannot run, even when the form is submitted with Enter', async () => {
+    const blocked = {
+      ...RESEARCH_STATUS,
+      research: { available: false, reason: 'research_disabled', message: 'The research agents are turned off on this workspace.' },
+    }
+    await open('research_agents', { status: blocked, template: 'gap' })
+    expect(openButton().disabled).toBe(true)
+    dialog().querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(askAgent).not.toHaveBeenCalled()
+    expect(dialog()).not.toBeNull()
+  })
+
+  it('never hands a writer task over when the agent process is down', async () => {
+    await open('landing_page', { status: { ...RESEARCH_STATUS, live_available: false } })
+    expect(dialog().textContent).toContain("The AI agent isn't running right now.")
+    await type(byLabel('Search or prompt'), 'notion pricing')
+    dialog().querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(askAgent).not.toHaveBeenCalled()
+  })
+
   it('cannot open without a project', async () => {
     await open('gap_analyst', { status: RESEARCH_STATUS, websiteId: null })
     expect(openButton().disabled).toBe(true)
