@@ -169,7 +169,7 @@ def test_status_reports_the_research_agents(user, settings):
     api = client_for(user)
     status = data(api.get(reverse("agent-status")))
     assert not contract.missing(contract.STATUS, status)
-    assert status["swarm"] == {"enabled": True, "max_agents": 30,
+    assert status["swarm"] == {"enabled": True, "max_agents": 50,
                                "worker_model": "claude-haiku-5-5"}
     settings.AGENT_SWARM_ENABLED = False
     settings.AGENT_SWARM_MAX_TASKS = 12
@@ -265,6 +265,7 @@ def test_rerun_scope_must_exist_in_the_research(user, chat, held):
 @pytest.mark.usefixtures("allowance")
 def test_rerun_refusals(user, chat, swarm, held, settings, website):
     api = client_for(user)
+    settings.AGENT_USER_ACTIVE_RUNS = 1
 
     settings.AGENT_SWARM_ENABLED = False
     resp = api.post(rerun_url(swarm), {"scope": "all"}, format="json")

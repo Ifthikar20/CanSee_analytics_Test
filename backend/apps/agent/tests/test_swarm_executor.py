@@ -89,7 +89,7 @@ def test_inline_mode_runs_the_tasks_in_task_order_and_saves_the_version(chat, mo
     assert part["id"] == outcome.part_id
     assert (part["status"], part["version"], part["scope"], part["scope_label"]) == (
         "running", 1, "all", "All agents")
-    assert part["limits"] == {"max_tasks": 30, "workers": 6}
+    assert part["limits"] == {"max_tasks": 50, "workers": 8}
     assert [t["status"] for t in part["tasks"]] == ["queued"] * len(ids)
     first = _task_events(run, "google.p1.page1")
     assert [(e["type"], e["rev"]) for e in first] == [

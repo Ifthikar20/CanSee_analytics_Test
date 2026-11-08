@@ -87,7 +87,7 @@ def test_a_long_poll_on_a_finished_run_answers_without_waiting(finished, user):
 
     assert time.monotonic() - started < 2
     assert body == {"events": [], "next_after": last, "terminal": True,
-                    "run_status": "completed"}
+                    "run_status": "completed", "queue": None}
     assert open_reads.held(user.id) == 0
 
 

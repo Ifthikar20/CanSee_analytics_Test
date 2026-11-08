@@ -86,6 +86,7 @@ ROUTES = [
 # Section 2: every event carries the envelope plus its payload.
 EVENT_ENVELOPE = {"v", "seq", "type", "run_id", "message_id", "ts"}
 EVENT_PAYLOADS = {
+    "run.queued": {"position", "ahead", "slots"},
     "run.started": {"chat_id", "user_message_id", "model"},
     "run.retrying": {"attempt", "reason", "delay_ms"},
     "run.usage": {"requests", "input_tokens", "output_tokens", "cache_read_tokens",
@@ -165,11 +166,13 @@ MESSAGE = {"id", "chat_id", "parent_id", "role", "status", "parts", "parts_seq",
            "feedback", "sibling_ids", "run_id", "saved_report_id"}
 MESSAGE_STATUSES = {"complete", "streaming", "truncated", "refused", "cancelled", "failed",
                     "interrupted"}
-RUN = {"id", "chat_id", "message_id", "status", "last_seq"}
+RUN = {"id", "chat_id", "message_id", "status", "last_seq", "queue"}
 CHAT_SUMMARY = {"id", "title", "preview", "created_at", "last_message_at", "active_run_id"}
 CHAT_DETAIL = {"id", "title", "title_source", "created_at", "last_message_at",
                "current_leaf_id", "messages", "active_run"}
-ACTIVE_RUN = {"id", "status", "message_id", "last_seq"}
+ACTIVE_RUN = {"id", "status", "message_id", "last_seq", "queue"}
+# A run waiting for a free run thread (null otherwise).
+RUN_QUEUE = {"position", "ahead", "slots"}
 ARTIFACT_SUMMARY = {"id", "kind", "title", "agent_key", "latest_version", "created_at",
                     "updated_at", "created_by_name", "source_chat_id", "review"}
 ARTIFACT_REVIEW = {"state", "effective_state", "version", "reviewer_name", "updated_at"}
@@ -221,7 +224,7 @@ TASK_ERROR_CODES = {"not_configured", "not_selected", "daily_limit", "browse_lim
                     "fetch_failed", "blocked_url", "timeout", "deadline", "upstream_error",
                     "rate_limited", "allowance_exceeded", "refused", "invalid_output",
                     "nothing_to_analyze", "dependency_failed", "prompt_missing", "stopped",
-                    "interrupted", "internal_error"}
+                    "interrupted", "internal_error", "cost_limit"}
 # Section 5b: category notes.
 SWARM_NOTE = {"level", "code", "text"}
 NOTE_CODES = {"serp_not_configured", "engines_not_configured", "engines_not_selected",
