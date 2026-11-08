@@ -862,6 +862,40 @@ describe('onboarding: first research', () => {
     expect(toast.warning).not.toHaveBeenCalled()
   })
 
+  it("greets the project's first landings on the analytics board, with or without the research", async () => {
+    auth.user = { id: 7 }
+    try {
+      localStorage.setItem('cs-setup-v1:7:w1', JSON.stringify({ mode: 'research', chatId: 'old', createdAt: 1, dismissed: true }))
+      const first = await atRunStep()
+      finishMocks()
+      await first.flow.skipResearch()
+      const skipped = JSON.parse(localStorage.getItem('cs-setup-v1:7:w1'))
+      expect(skipped).toMatchObject({ mode: 'skip', chatId: null, dismissed: false, collapsed: false })
+      expect(Date.now() - skipped.createdAt).toBeLessThan(60_000)
+
+      const second = await atRunStep()
+      finishMocks()
+      await second.flow.startResearch()
+      // The chat id comes later, from the agent page that sends the research.
+      expect(JSON.parse(localStorage.getItem('cs-setup-v1:7:w1'))).toMatchObject({ mode: 'research', chatId: null })
+    } finally {
+      delete auth.user
+      localStorage.removeItem('cs-setup-v1:7:w1')
+    }
+  })
+
+  it('records no first landing when the project could not be saved', async () => {
+    auth.user = { id: 7 }
+    try {
+      const { flow } = await atRunStep()
+      post.mockRejectedValue(new Error('x'))
+      await flow.skipResearch()
+      expect(localStorage.getItem('cs-setup-v1:7:w1')).toBeNull()
+    } finally {
+      delete auth.user
+    }
+  })
+
   it('says so when the skipped prompts cannot be tracked', async () => {
     const { flow } = await atRunStep()
     finishMocks()

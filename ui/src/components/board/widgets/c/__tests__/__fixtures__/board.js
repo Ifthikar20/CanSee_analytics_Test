@@ -80,7 +80,10 @@ export function testRouter() {
  */
 export async function mountOnBoard(
     component,
-    { props = {}, board = fakeBoard(), panel = false, path = '/projects/w1/analytics', stubs = {}, session = null } = {},
+    {
+        props = {}, board = fakeBoard(), panel = false, path = '/projects/w1/analytics',
+        stubs = {}, session = null, provide: extra = {},
+    } = {},
 ) {
     const pinia = createPinia()
     setActivePinia(pinia)
@@ -88,7 +91,7 @@ export async function mountOnBoard(
     const router = testRouter()
     await router.push(path)
     await router.isReady()
-    const provide = { [BOARD_CONTEXT]: board }
+    const provide = { [BOARD_CONTEXT]: board, ...extra }
     if (panel) provide[IN_PANEL] = true
     const wrapper = mount(component, {
         props: { websiteId: 'w1', ...props },

@@ -128,6 +128,29 @@ describe('RankingCard', () => {
         expect(button(wrapper, 'All prompts')).toBeTruthy()
     })
 
+    it('points an empty ranking to Setup while the board shows it, and stays quiet otherwise', async () => {
+        const { SETUP_POINTER } = await import('@/lib/board/context')
+        const { ref } = await import('vue')
+        const text = ref('Your first research is still running. Its progress is in Setup at the top of this page.')
+        const show = vi.fn()
+        setSource('ranking', { data: rankingPayload({ prompts: [] }) })
+        const { wrapper } = await mountOnBoard(RankingCard, { props: { size: 'full' }, provide: { [SETUP_POINTER]: { text, show } } })
+        mounted.push(wrapper)
+        expect(wrapper.find('.rk-state .bd-setup-pointer').text()).toContain(text.value)
+        await button(wrapper, 'Show setup').trigger('click')
+        expect(show).toHaveBeenCalledTimes(1)
+
+        text.value = ''
+        await wrapper.vm.$nextTick()
+        expect(wrapper.find('.bd-setup-pointer').exists()).toBe(false)
+
+        // A ranking with numbers is not empty: no pointer.
+        text.value = 'See Setup at the top of this page for what to do next.'
+        setSource('ranking', { data: rankingPayload({ prompts: rankedRows(3) }) })
+        await wrapper.vm.$nextTick()
+        expect(wrapper.find('.bd-setup-pointer').exists()).toBe(false)
+    })
+
     it('says what Autopilot does: off with Turn it on, or when it runs first', async () => {
         setSource('ranking', { data: rankingPayload({ autopilot: { enabled: false, last_run: null, next_run_at: null } }) })
         const { wrapper } = await render()
