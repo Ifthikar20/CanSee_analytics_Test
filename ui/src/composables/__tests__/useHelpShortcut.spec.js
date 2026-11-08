@@ -77,6 +77,28 @@ describe('useHelpShortcut', () => {
     expect(help.isOpen).toBe(true)
   })
 
+  it('is not blocked by an open tooltip, but still is by a dialog', () => {
+    const { help } = setup()
+    // reka TooltipContent: a dismissable layer holding a role="tooltip" node.
+    const tooltip = document.createElement('div')
+    tooltip.setAttribute('data-dismissable-layer', '')
+    const label = document.createElement('span')
+    label.setAttribute('role', 'tooltip')
+    label.textContent = 'Help, docs and shortcuts'
+    tooltip.appendChild(label)
+    document.body.appendChild(tooltip)
+    expect(press(document.getElementById('btn')).defaultPrevented).toBe(true)
+    expect(help.isOpen).toBe(true)
+    help.close()
+
+    const dialog = document.createElement('div')
+    dialog.setAttribute('data-dismissable-layer', '')
+    dialog.setAttribute('role', 'dialog')
+    document.body.appendChild(dialog)
+    expect(press(document.getElementById('btn')).defaultPrevented).toBe(false)
+    expect(help.isOpen).toBe(false)
+  })
+
   it('stops listening when its scope ends', () => {
     const { wrapper, help } = setup()
     mounted.pop()
