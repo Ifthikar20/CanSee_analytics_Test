@@ -901,3 +901,80 @@ def test_spend_a_research_agent_reported_but_the_run_has_not_counted_yet_counts(
     swarm_run.drain_usage()
     assert usage.cost == Decimal("0.05")
     assert swarm_run.cost_usd == Decimal("0.05")
+
+
+def test_the_runners_budget_check_for_tools_words_the_free_accounts_cost_stop(
+        chat, settings):
+    """The deadline and ceiling check the runner hands to its tools (engine
+    checks, research agents) words the stop for the run's account."""
+    from apps.agent.runtime.registry import ActiveRun
+    from apps.agent.runtime.runner import TurnRunner
+    from apps.agent.tests.swarm_support import make_run
+    from apps.metering.tests.prompt_run_support import make_paid
+
+    settings.AGENT_RUN_MAX_COST_USD = 0.05
+    run = make_run(chat)
+    runner = TurnRunner(run, ActiveRun(run.id))
+    runner.totals.cost_usd = Decimal("0.04")
+    assert runner._budget_stop() is None
+    # Spend a tool has seen but not added yet counts toward the ceiling.
+    stop = runner._budget_stop(Decimal("0.01"))
+    assert (stop.code, stop.message) == (
+        "run_cost_limit", "This reply reached the cost limit for one reply.")
+
+    make_paid(chat.user)
+    paid = TurnRunner(AgentRun.objects.get(id=run.id), ActiveRun(run.id))
+    paid.totals.cost_usd = Decimal("0.05")
+    assert paid._budget_stop().message == "This reply reached the $0.05 cost limit for one reply."
+
+
+def test_a_free_accounts_engine_check_in_a_real_turn_stops_without_dollars(
+        fake_anthropic, chat, website, monkeypatch, settings):
+    """A whole turn: the engine check the model asked for reaches the
+    ceiling through the runner's own budget check; neither the run's error
+    nor the partial tool result saved for the next turn names an amount."""
+    import json as _json
+
+    from apps.agent.tests.fakes import tool_use
+    from apps.agent.tests.runtime_support import make_prompt
+    from apps.prompt_library.services.prompt_crawler import CrawlOutcome
+    from core import ai_tracking
+
+    settings.ANTHROPIC_API_KEY = "test-key"
+    settings.OPENAI_API_KEY = "sk-test"
+    settings.PERPLEXITY_API_KEY = ""
+    settings.GEMINI_API_KEY = ""
+    settings.XAI_API_KEY = ""
+    settings.AGENT_RUN_MAX_COST_USD = 0.05
+    settings.AI_FREE_MONTHLY_CAP_USD = 100.0
+    first = make_prompt(website, "best crm for startups")
+    second = make_prompt(website, "best crm for dentists")
+    asked = []
+
+    def crawl(website, prompt, *, acting_user=None, should_stop=None, **_kwargs):
+        asked.append(prompt.id)
+        # One gpt-4o-mini answer of this size costs about $0.075.
+        ai_tracking.record_usage(module="prompt_library", model_name="gpt-4o-mini",
+                                 input_tokens=100_000, output_tokens=100_000,
+                                 user=acting_user, website=website, provider="openai")
+        return CrawlOutcome(fanouts=[], responses=1, errors=[])
+
+    monkeypatch.setattr("apps.prompt_library.services.prompt_crawler.crawl_prompt", crawl)
+    fake_anthropic.queue(message(tool_use(
+        "check_ai_engines", {"prompt_ids": [str(first.prompt_id), str(second.prompt_id)]},
+        id="toolu_e"), stop_reason="tool_use"), message(text("Not reached.")))
+
+    started = send(chat, "Check the engines")
+
+    run = AgentRun.objects.get(id=started.run.id)
+    reply = AgentMessage.objects.get(id=started.assistant_message.id)
+    assert len(asked) == 1 and len(fake_anthropic.requests) == 1
+    assert (run.status, run.error_code) == ("failed", "run_cost_limit")
+    assert run.error_message == "This reply reached the cost limit for one reply."
+    results = [b for m in wire.loads(reply.wire) if m["role"] == "user"
+               for b in m["content"] if b.get("type") == "tool_result"]
+    [partial] = [b for b in results if b["tool_use_id"] == "toolu_e"]
+    assert _json.loads(partial["content"])["error"] == run.error_message
+    assert "$" not in partial["content"]
+    failed = run_events(run)[-1]
+    assert failed["type"] == "run.failed" and "$" not in failed["error"]["message"]
