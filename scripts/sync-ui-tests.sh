@@ -30,7 +30,9 @@ old_dirs="$(find src -type d -name __tests__ -prune)"
 old_specs="$(find src -type f -name '*.spec.js' ! -path '*/__tests__/*' ! -path 'src/test/*')"
 
 # Never delete anything the UI repository tracks.
-if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+# With no paths at all, `git ls-files --` would list every tracked file and
+# refuse a checkout that simply has no test files yet.
+if [ -n "${old_dirs}${old_specs}" ] && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     # shellcheck disable=SC2086
     tracked="$(git ls-files -- $old_dirs $old_specs 2>/dev/null || true)"
     if [ -n "$tracked" ]; then

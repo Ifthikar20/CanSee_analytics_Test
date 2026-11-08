@@ -426,6 +426,24 @@ describe('agent store: a research turn end to end', () => {
         expect(agentApi.sendMessage.mock.calls[1][2].engines).toEqual(['claude', 'chatgpt'])
     })
 
+    it('sends a report template and the chosen engines together, and both again on retry', async () => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(ok(chatDetail()))
+        agentApi.sendMessage.mockRejectedValueOnce(axiosError(502, {}))
+        await store.send({ chatId: CHAT_ID, text: 'Write the report', engines: ['grok'], template: 'prompt_deep_dive' })
+        await flush()
+        const first = agentApi.sendMessage.mock.calls[0][2]
+        expect(first.engines).toEqual(['grok'])
+        expect(first.template).toBe('prompt_deep_dive')
+
+        const failed = store.visiblePath(CHAT_ID).find((m) => m.role === 'user')
+        agentApi.sendMessage.mockResolvedValueOnce(accepted())
+        await store.retrySend(failed.id)
+        const second = agentApi.sendMessage.mock.calls[1][2]
+        expect(second.engines).toEqual(['grok'])
+        expect(second.template).toBe('prompt_deep_dive')
+    })
+
     it.each([
         ['no engines', undefined],
         ['an empty list', []],
