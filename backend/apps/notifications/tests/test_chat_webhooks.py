@@ -10,6 +10,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from django.test import Client
+from django.utils import timezone
 
 from apps.accounts.tests.factories import UserFactory
 from apps.notifications.models import IntegrationConnection
@@ -21,16 +22,20 @@ SLACK_COMMANDS_URL = "/api/v1/notifications/slack/commands/"
 SIGNING_SECRET = "test-signing-secret"
 
 
-def _connection(platform: str, team_id: str) -> IntegrationConnection:
+def _connection(platform: str, team_id: str, *, verified: bool = True,
+                user=None) -> IntegrationConnection:
+    """A connection; a non-blank ``team_id`` is a verified link unless
+    ``verified=False`` (an id typed in by hand before links were verified)."""
     urls = {
         "slack": "https://hooks.slack.com/services/T0/B0/xyz",
         "discord": "https://discord.com/api/webhooks/1/abc",
     }
     return IntegrationConnection.objects.create(
-        user=UserFactory(),
+        user=user or UserFactory(),
         platform=platform,
         webhook_url=urls[platform],
         external_team_id=team_id,
+        external_team_verified_at=timezone.now() if (team_id and verified) else None,
     )
 
 
@@ -110,7 +115,7 @@ class TestDiscordInteractions:
         body = resp.json()
         assert body["type"] == 4
         assert body["data"]["flags"] == 64
-        assert "999888777" in body["data"]["content"]
+        assert "/cansee link" in body["data"]["content"]
         mock_delay.assert_not_called()
 
     def test_known_guild_defers_and_enqueues(self, discord_key):
@@ -340,7 +345,7 @@ class TestSlackCommands:
         assert resp.status_code == 200
         body = resp.json()
         assert body["response_type"] == "ephemeral"
-        assert "T-unlinked" in body["text"]
+        assert "/cansee link" in body["text"]
         mock_delay.assert_not_called()
 
     def test_bad_signature_rejected(self, slack_secret):
@@ -394,3 +399,138 @@ class TestWebhookRateLimiter:
         ):
             resp = Client().get("/api/v1/version/")
         assert resp.status_code == 200
+
+
+# ── Verified workspace links ──────────────────────────────────────────────────
+
+
+def _link_code(user, connection) -> str:
+    from rest_framework.test import APIClient
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    resp = client.post(f"/api/v1/notifications/integrations/{connection.id}/link-code/")
+    assert resp.status_code == 201, resp.content
+    payload = resp.json()["data"]
+    assert payload["command"] == f"/cansee link {payload['code']}"
+    assert payload["expires_in"] == 900
+    return payload["code"]
+
+
+def _slack_link(team_id: str, code: str):
+    raw = _command_form(team_id, f"link {code}")
+    return _post_slack(SLACK_COMMANDS_URL, raw, "application/x-www-form-urlencoded").json()
+
+
+@pytest.mark.django_db
+class TestWorkspaceLinking:
+    def test_unverified_id_typed_by_another_tenant_never_resolves(self, slack_secret):
+        _connection("slack", "T-victim", verified=False)
+        raw = _command_form("T-victim", "report")
+        with patch("apps.notifications.tasks.answer_chat_command.delay") as mock_delay:
+            body = _post_slack(
+                SLACK_COMMANDS_URL, raw, "application/x-www-form-urlencoded").json()
+        assert "not linked" in body["text"]
+        mock_delay.assert_not_called()
+
+    def test_slack_link_code_binds_the_signed_team(self, slack_secret):
+        user = UserFactory()
+        connection = _connection("slack", "", user=user)
+        code = _link_code(user, connection)
+
+        body = _slack_link("T-real", code)
+        assert body["response_type"] == "ephemeral"
+        assert "now linked" in body["text"]
+        connection.refresh_from_db()
+        assert connection.external_team_id == "T-real"
+        assert connection.external_team_verified_at is not None
+
+        with patch("apps.notifications.tasks.answer_chat_command.delay") as mock_delay:
+            _post_slack(SLACK_COMMANDS_URL, _command_form("T-real", "report"),
+                        "application/x-www-form-urlencoded")
+        assert mock_delay.call_args.kwargs["connection_id"] == str(connection.id)
+
+    def test_a_code_works_once(self, slack_secret):
+        user = UserFactory()
+        connection = _connection("slack", "", user=user)
+        code = _link_code(user, connection)
+        assert "now linked" in _slack_link("T-one", code)["text"]
+        assert "not valid" in _slack_link("T-two", code)["text"]
+        connection.refresh_from_db()
+        assert connection.external_team_id == "T-one"
+
+    def test_a_verified_workspace_is_never_taken_over(self, slack_secret):
+        owner = _connection("slack", "T-shared")
+        intruder_user = UserFactory()
+        intruder = _connection("slack", "", user=intruder_user)
+        code = _link_code(intruder_user, intruder)
+
+        body = _slack_link("T-shared", code)
+        assert "already linked to another Cansee account" in body["text"]
+        owner.refresh_from_db()
+        intruder.refresh_from_db()
+        assert owner.external_team_id == "T-shared"
+        assert intruder.external_team_id == ""
+
+    def test_verified_link_releases_unverified_claims(self, slack_secret):
+        squatter = _connection("slack", "T-mine", verified=False)
+        user = UserFactory()
+        mine = _connection("slack", "", user=user)
+        assert "now linked" in _slack_link("T-mine", _link_code(user, mine))["text"]
+        squatter.refresh_from_db()
+        assert squatter.external_team_id == ""
+
+    def test_wrong_codes_are_limited_per_workspace(self, slack_secret):
+        user = UserFactory()
+        connection = _connection("slack", "", user=user)
+        for _ in range(10):
+            assert "not valid" in _slack_link("T-guess", "AAAAA-AAAAA")["text"]
+        code = _link_code(user, connection)
+        assert "Too many link attempts" in _slack_link("T-guess", code)["text"]
+        connection.refresh_from_db()
+        assert connection.external_team_id == ""
+
+    def test_discord_link_subcommand_binds_the_guild(self, discord_key):
+        user = UserFactory()
+        connection = _connection("discord", "", user=user)
+        code = _link_code(user, connection)
+        resp = _post_interaction(discord_key, _slash_payload(
+            "555666777", "link", [{"name": "code", "type": 3, "value": code}]))
+        body = resp.json()
+        assert body["type"] == 4 and body["data"]["flags"] == 64
+        assert "now linked" in body["data"]["content"]
+        connection.refresh_from_db()
+        assert connection.external_team_id == "555666777"
+
+    def test_link_code_needs_your_own_slack_or_discord_connection(self):
+        from rest_framework.test import APIClient
+
+        other = _connection("slack", "")
+        client = APIClient()
+        client.force_authenticate(user=UserFactory())
+        assert client.post(
+            f"/api/v1/notifications/integrations/{other.id}/link-code/").status_code == 404
+
+
+
+@pytest.mark.django_db
+def test_migration_keeps_only_unambiguous_typed_in_links():
+    import importlib
+
+    from django.apps import apps as django_apps
+
+    migration = importlib.import_module(
+        "apps.notifications.migrations.0007_verified_chat_workspace_link")
+    solo = _connection("slack", "T-solo", verified=False)
+    dup_a = _connection("slack", "T-dup", verified=False)
+    dup_b = _connection("slack", "T-dup", verified=False)
+    blank = _connection("discord", "", verified=False)
+
+    migration.keep_unambiguous_links(django_apps, None)
+
+    for row in (solo, dup_a, dup_b, blank):
+        row.refresh_from_db()
+    assert solo.external_team_verified_at is not None
+    assert dup_a.external_team_verified_at is None
+    assert dup_b.external_team_verified_at is None
+    assert blank.external_team_verified_at is None

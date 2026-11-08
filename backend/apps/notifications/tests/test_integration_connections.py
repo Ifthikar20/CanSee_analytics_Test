@@ -101,7 +101,7 @@ class TestConnectValidation:
         connection = IntegrationConnection.objects.get(user=user, platform="slack")
         assert connection.webhook_url == SLACK_URL
 
-    def test_external_team_id_persisted(self, auth):
+    def test_external_team_id_cannot_be_typed_in(self, auth):
         client, user = auth
         resp = client.post(
             INTEGRATIONS_URL,
@@ -112,9 +112,28 @@ class TestConnectValidation:
             },
             format="json",
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 400
         connection = IntegrationConnection.objects.get(user=user, platform="discord")
-        assert connection.external_team_id == "999888777"
+        assert connection.external_team_id == ""
+
+    def test_clearing_the_team_id_unlinks(self, auth):
+        from django.utils import timezone
+
+        client, user = auth
+        connection = IntegrationConnection.objects.create(
+            user=user, platform="slack", webhook_url=SLACK_URL,
+            external_team_id="T1", external_team_verified_at=timezone.now(),
+        )
+        unchanged = client.put(f"{INTEGRATIONS_URL}{connection.id}/",
+                               {"external_team_id": "T1"}, format="json")
+        assert unchanged.status_code == 200
+        assert unchanged.json()["data"]["data"]["external_team_linked"] is True
+        cleared = client.put(f"{INTEGRATIONS_URL}{connection.id}/",
+                             {"external_team_id": ""}, format="json")
+        assert cleared.status_code == 200
+        assert cleared.json()["data"]["data"]["external_team_linked"] is False
+        connection.refresh_from_db()
+        assert connection.external_team_verified_at is None
 
     def test_telegram_platform_no_longer_accepted(self, auth):
         client, _user = auth
