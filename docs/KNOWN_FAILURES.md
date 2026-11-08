@@ -34,3 +34,18 @@ with the merged backend":
 - The onboarding tests no longer exhaust memory: one test mocked the whole
   `WebsiteService`, a query returned a mock, and the JSON encoder recursed on
   it.
+
+## Console
+
+Two tests in `console/tests/server/proxyEdges.test.js` fail against
+cansee_console_app `main` at `5745b5b` and pass with the fix on its
+`hd/console` branch ("Map backend body-read failures to the timeout and
+network errors"):
+
+- `answers 504 when the headers arrive but the body stalls past the timeout`:
+  the timeout signal aborts the body read, but only the fetch call was
+  wrapped, so the console answered 502 "The backend request failed."
+- `answers 502 "could not be reached" when the connection drops mid-body`:
+  same cause, generic message instead of the network error.
+
+Remove this section once that fix is merged.
