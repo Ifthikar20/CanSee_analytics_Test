@@ -1,10 +1,12 @@
 # Known failing backend tests
 
-None. Run on 2026-11-08: this repository at the commit that changes this
-file, against CanSee_analytics_App `feature/November-26` at `7886e9a`
-(wave 1 merged), one app at a time with `scripts/run-backend-tests.sh`:
-4605 passed, 0 failed, 1 skipped. The UI suite against
-Cansee_analytics_UI_APP `feature/November-26` at `95c571c` (wave 2 merged): 3419 passed.
+None. Run on 2026-11-08 after the test-hardening pass, one app at a time
+with the scripts in scripts/:
+
+- Backend: CanSee_analytics_App `feature/November-26` at `a360083`: 4816
+  passed, 0 failed, 1 skipped.
+- UI: Cansee_analytics_UI_APP `feature/November-26` at `e783e75`: 3506 passed.
+- Console: CanSee_console_app `main` at `1d3555a`: 369 passed.
 
 The six backend bugs this file used to list (response envelope pagination,
 event log CSV export, dotless website hosts, truncated JSON repair, the geo
