@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import AgentChips from '../AgentChips.vue'
+import { AGENT_ORDER, agentList } from '@/lib/agent/agentsMeta'
 
 enableAutoUnmount(afterEach)
 
@@ -56,5 +57,14 @@ describe('AgentChips', () => {
   it('adds no note when every agent can start', () => {
     const wrapper = mount(AgentChips, { props: { agents: AGENTS.map((a) => ({ ...a, unavailable: '' })) } })
     expect(wrapper.find('.ag-chips-note').exists()).toBe(false)
+  })
+
+  it('shows all ten agents, in catalog order, each its own button', () => {
+    const wrapper = mount(AgentChips, { props: { agents: agentList(), agent: null } })
+    const chips = wrapper.findAll('button.ag-chip')
+    expect(chips).toHaveLength(10)
+    expect(AGENT_ORDER).toHaveLength(10)
+    expect(chips.map((c) => c.find('.ag-chip-name').text())).toEqual(agentList().map((a) => a.name))
+    expect(chips.every((c) => c.attributes('aria-pressed') === 'false')).toBe(true)
   })
 })
