@@ -28,9 +28,11 @@ def setup(db):
     prompt = Prompt.objects.create(
         industry=industry, text=PROMPT_TEXT, text_hash="h1",
         intent_bucket="comparison", style="comparison",
-        demand_score=0.8, effectiveness_score=0.65,
+        demand_score=0.8,
     )
-    BrandPrompt.objects.create(website=website, prompt=prompt, tags=["core"])
+    BrandPrompt.objects.create(
+        website=website, prompt=prompt, tags=["core"], effectiveness_score=0.65,
+    )
     audit = LLMRankingAudit.objects.create(website=website, created_by=user)
     return user, website, prompt, audit
 
@@ -143,7 +145,7 @@ def test_rollups_are_built_from_results(setup):
     # Distribution behind the sentiment mean.
     assert row["sentiment_dist"] == {"positive": 1, "neutral": 1, "negative": 0}
 
-    # Free field already on the select_related Prompt.
+    # This website's own score, stored on its BrandPrompt.
     assert row["effectiveness_score"] == pytest.approx(0.65)
 
 

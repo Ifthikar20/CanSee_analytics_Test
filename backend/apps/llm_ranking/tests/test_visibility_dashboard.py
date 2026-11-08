@@ -515,7 +515,7 @@ def test_api_rejects_bad_filters(user, website, engines):
         assert resp.json()["error"]["code"] == "not_found"
 
 
-def test_api_hides_the_project_from_strangers_and_viewers(user, website, engines):
+def test_api_hides_the_project_from_strangers_and_serves_viewers(user, website, engines):
     org = Organization.objects.create(name="Acme", slug="acme-notes", owner=user)
     website.organization = org
     website.save(update_fields=["organization"])
@@ -527,6 +527,6 @@ def test_api_hides_the_project_from_strangers_and_viewers(user, website, engines
     OrganizationMember.objects.create(organization=org, user=member, role="member")
     client = APIClient()
 
-    for person, status in ((stranger, 404), (viewer, 404), (member, 200)):
+    for person, status in ((stranger, 404), (viewer, 200), (member, 200)):
         client.force_authenticate(person)
         assert client.get(_url(website)).status_code == status, person.email

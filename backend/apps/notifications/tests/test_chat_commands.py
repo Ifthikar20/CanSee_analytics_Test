@@ -582,3 +582,115 @@ class TestAskFactPack:
         assert block.endswith(ASK_FACT_BLOCK_MORE_LINE)
         assert "Saved prompts, most recent first:" in block
         assert block.index("Brand security") < block.index("Saved prompts")
+
+
+def _org_creator(role):
+    """A user who created an org project and now holds ``role`` in that org."""
+    from apps.accounts.models import Organization, OrganizationMember
+
+    owner = UserFactory()
+    org = Organization.objects.create(name="Acme", slug="acme-chat", owner=owner)
+    OrganizationMember.objects.create(organization=org, user=owner, role="owner")
+    creator = UserFactory()
+    member = OrganizationMember.objects.create(
+        organization=org, user=creator, role="member",
+    )
+    website = WebsiteFactory(user=creator, organization=org)
+    if role != "member":
+        member.role = role
+        member.save(update_fields=["role"])
+    return creator, website
+
+
+@pytest.mark.django_db
+class TestCommandsFollowCurrentOrgRole:
+    """Creating an org project grants nothing in chat after a downgrade:
+    scan and ask need member or above, as they do in the app (403)."""
+
+    def _run(self, connection, command, text=""):
+        with patch("apps.notifications.tasks.requests.post") as mock_post:
+            answer_chat_command(
+                connection_id=str(connection.id), command=command,
+                text=text, respond_to=SLACK_RESPONSE_URL,
+            )
+        return _slack_reply_text(mock_post)
+
+    def test_downgraded_creator_cannot_scan(self, settings):
+        from apps.llm_ranking.models import LLMRankingAudit
+        from apps.notifications.tasks import VIEW_ONLY_COMMAND_REPLY
+
+        settings.OPENAI_API_KEY = "sk-test"
+        creator, _website = _org_creator("viewer")
+        connection = _slack_connection(creator)
+        prompts = [{"text": "best analytics tools?", "type": "generic"}]
+        with patch(
+            "apps.llm_ranking.services.audit_runner.gather_saved_prompts",
+            return_value=prompts,
+        ), patch(
+            "apps.llm_ranking.services.scan_dispatch.dispatch_scan",
+        ) as mock_dispatch:
+            reply = self._run(connection, "scan")
+        assert reply == VIEW_ONLY_COMMAND_REPLY
+        assert LLMRankingAudit.objects.count() == 0
+        mock_dispatch.assert_not_called()
+
+    def test_member_creator_can_still_scan(self, settings):
+        from apps.llm_ranking.models import LLMRankingAudit
+
+        settings.OPENAI_API_KEY = "sk-test"
+        creator, website = _org_creator("member")
+        connection = _slack_connection(creator)
+        prompts = [{"text": "best analytics tools?", "type": "generic"}]
+        with patch(
+            "apps.llm_ranking.services.audit_runner.gather_saved_prompts",
+            return_value=prompts,
+        ), patch("apps.llm_ranking.services.scan_dispatch.dispatch_scan"):
+            reply = self._run(connection, "scan")
+        assert "queued" in reply
+        assert LLMRankingAudit.objects.filter(website=website).count() == 1
+
+    def test_downgraded_creator_cannot_ask(self):
+        from apps.notifications.tasks import VIEW_ONLY_COMMAND_REPLY
+
+        creator, _website = _org_creator("viewer")
+        connection = _slack_connection(creator)
+        provider = MagicMock()
+        provider.query.return_value = SimpleNamespace(succeeded=True, text="paid answer")
+        with patch(
+            "apps.llm_ranking.providers.get_provider", return_value=provider,
+        ), patch(
+            "apps.llm_ranking.providers.get_synthesis_provider", return_value=provider,
+        ), patch(
+            "apps.rag.services.retriever.retrieve_context_block", return_value="",
+        ):
+            reply = self._run(connection, "ask", "what changed")
+        assert reply == VIEW_ONLY_COMMAND_REPLY
+        provider.query.assert_not_called()
+
+    def test_downgraded_creator_scans_their_personal_project(self, settings):
+        """A personal project stays theirs: the view-only org project is
+        skipped, not the whole account."""
+        from apps.llm_ranking.models import LLMRankingAudit
+
+        settings.OPENAI_API_KEY = "sk-test"
+        creator, org_website = _org_creator("viewer")
+        personal = WebsiteFactory(user=creator, organization=None)
+        connection = _slack_connection(creator)
+        prompts = [{"text": "best analytics tools?", "type": "generic"}]
+        with patch(
+            "apps.llm_ranking.services.audit_runner.gather_saved_prompts",
+            return_value=prompts,
+        ), patch("apps.llm_ranking.services.scan_dispatch.dispatch_scan"):
+            reply = self._run(connection, "scan")
+        assert "queued" in reply
+        assert LLMRankingAudit.objects.filter(website=personal).count() == 1
+        assert LLMRankingAudit.objects.filter(website=org_website).count() == 0
+
+    def test_downgraded_creator_still_gets_read_only_digests(self):
+        from apps.notifications.tasks import VIEW_ONLY_COMMAND_REPLY
+
+        creator, _website = _org_creator("viewer")
+        connection = _slack_connection(creator)
+        reply = self._run(connection, "security")
+        assert reply
+        assert reply != VIEW_ONLY_COMMAND_REPLY

@@ -112,12 +112,13 @@ def website(user):
 
 
 def make_prompt(text: str) -> Prompt:
+    """A shared catalog prompt, so it can also be offered as a suggestion."""
     industry, _ = Industry.objects.get_or_create(
         slug="crm-billing-tests", defaults={"name": "CRM (billing tests)", "is_active": True},
     )
     return Prompt.objects.create(
         industry=industry, text=text, template_text=text, intent_bucket="category",
-        source="manual", text_hash=text_hash(text),
+        source="reddit", text_hash=text_hash(text), is_catalog=True,
     )
 
 

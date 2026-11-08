@@ -33,3 +33,6 @@ class PromptFactory(DjangoModelFactory):
     source = PromptSource.LLM_SYNTH
     text_hash = factory.LazyAttribute(lambda o: text_hash(o.text))
     is_active = True
+    # A library prompt: part of the shared catalog unless a test says
+    # otherwise (tenant-authored rows are private, is_catalog=False).
+    is_catalog = True

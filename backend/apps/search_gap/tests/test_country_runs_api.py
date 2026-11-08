@@ -203,7 +203,8 @@ def test_caps_and_an_empty_check_are_400(api, website, prompts, ready, settings)
            400, "nothing_to_check")
 
 
-def test_viewers_and_strangers_get_404(website, user, prompts, ready, django_user_model):
+def test_viewers_read_and_get_403_on_writes_strangers_get_404(
+        website, user, prompts, ready, django_user_model):
     run = make_run(website, user, prompts=prompts)
     cell = make_cell(run, prompts[0], "gb", "chatgpt", mentioned=True)
     org = Organization.objects.create(name="Acme", slug="acme", owner=user)
@@ -223,12 +224,16 @@ def test_viewers_and_strangers_get_404(website, user, prompts, ready, django_use
         ("post", url("search-gap-country-run-cancel", website, run_id=run.id)),
         ("get", url("search-gap-country-result", website, result_id=cell.id)),
     ]
+    expected = {
+        viewer: {"get": 200, "post": 403},
+        stranger: {"get": 404, "post": 404},
+    }
     for person in (viewer, stranger):
         client = APIClient()
         client.force_authenticate(person)
         for method, path in requests:
             resp = getattr(client, method)(path, body_for(prompts), format="json")
-            assert resp.status_code == 404, (person.email, path)
+            assert resp.status_code == expected[person][method], (person.email, path)
 
 
 def test_runs_list_newest_first_at_most_20(api, website, user):

@@ -302,9 +302,9 @@ def test_another_member_can_turn_the_text_off_but_not_on(
                                    "sms_consent": True}))
     assert got["sms"]["recipient"]["set_by_name"] == "Maya"
     assert twilio.sent[-1]["to"] == "+14155550444"
-    # A viewer reads but cannot write; a stranger gets 404.
+    # A viewer reads but cannot write (403); a stranger gets 404.
     assert client_for(viewer).get(url).status_code == 200
-    assert put(client_for(viewer), url, {"sms_digest": False}).status_code == 404
+    assert put(client_for(viewer), url, {"sms_digest": False}).status_code == 403
     assert client_for(make_user("x@example.com")).get(url).status_code == 404
 
 

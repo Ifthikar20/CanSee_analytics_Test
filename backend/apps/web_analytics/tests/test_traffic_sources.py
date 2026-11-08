@@ -212,6 +212,8 @@ def test_endpoint_serves_members_and_hides_the_project_from_others(user, website
     settings.WEB_ANALYTICS_ENABLED = False
     assert client.get(url).status_code == 200
 
-    for person in (viewer, stranger):
-        client.force_authenticate(person)
-        assert client.get(url).status_code == 404
+    # A viewer reads; someone outside the organization gets 404.
+    client.force_authenticate(viewer)
+    assert client.get(url).status_code == 200
+    client.force_authenticate(stranger)
+    assert client.get(url).status_code == 404

@@ -1,6 +1,7 @@
 """The Autopilot API (contract 3): Run now (estimate, create with its
 confirm, the 409s), the runs list and one run, Stop, and who may do what
-(viewers read, members run, everyone else gets 404, signed out 401)."""
+(viewers read and get 403 on writes, members run, everyone else gets 404,
+signed out 401)."""
 
 from datetime import timedelta
 
@@ -163,8 +164,8 @@ def test_who_may_do_what(website, user, engines):
     for name in ("settings", "runs", "run", "ranking"):
         assert as_viewer.get(paths[name]).status_code == 200, name
     for name in ("estimate", "create", "cancel", "test"):
-        assert as_viewer.post(paths[name], {}, format="json").status_code == 404, name
-    assert as_viewer.put(paths["settings"], {}, format="json").status_code == 404
+        assert as_viewer.post(paths[name], {}, format="json").status_code == 403, name
+    assert as_viewer.put(paths["settings"], {}, format="json").status_code == 403
 
     est = data(as_member.post(paths["estimate"], {}, format="json"))
     assert est["can_run"]
