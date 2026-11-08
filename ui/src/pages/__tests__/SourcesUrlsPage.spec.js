@@ -195,6 +195,19 @@ describe('SourcesUrlsPage: in and out of the board panel', () => {
         expect(wrapper.router.currentRoute.value.name).toBe('sources-urls')
     })
 
+    it('gives every URL a button that opens its detail once, for keyboard and screen-reader users', async () => {
+        const board = fakeBoard()
+        client.get.mockResolvedValueOnce({ data: urlsPayload(['g2.com'], { urls: [urlRow] }) })
+        const wrapper = await mountPage({ panel: board })
+        const button = wrapper.find('tr.cursor-pointer [data-open-url]')
+        expect(button.element.tagName).toBe('BUTTON')
+        expect(button.attributes('type')).toBe('button')
+        await button.trigger('click')
+        await flushPromises()
+        expect(board.open).toHaveBeenCalledTimes(1)
+        expect(board.open).toHaveBeenCalledWith('citations', { url: 'g2.com/best-note-apps' })
+    })
+
     it('keeps the list topic when it opens a detail in the panel', async () => {
         const board = fakeBoard()
         client.get.mockResolvedValue({

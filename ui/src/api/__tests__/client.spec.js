@@ -87,6 +87,28 @@ describe('refresh', () => {
         expect(refresh).toHaveBeenCalledTimes(1)
     })
 
+    it('a refused refresh keeps the page the user was on, so signing back in returns there', async () => {
+        routerMock.currentRoute.value = { name: 'agent-chat', fullPath: '/projects/w1/agent/c/9?tab=sources', meta: { section: 'agent' } }
+        vi.spyOn(axios, 'post').mockRejectedValue(new AxiosError('HTTP 401', 'ERR_BAD_REQUEST', {}, null, { status: 401, data: {}, headers: {} }))
+        await expect(client.refreshAccessToken()).rejects.toThrow()
+        expect(routerMock.push).toHaveBeenCalledWith({ name: 'login', query: { redirect: '/projects/w1/agent/c/9?tab=sources' } })
+        routerMock.currentRoute.value = { name: 'dashboard' }
+    })
+
+    it('a refused refresh on a public or guest page goes to login without a redirect', async () => {
+        for (const meta of [{ public: true }, { guest: true, layout: 'auth' }]) {
+            vi.resetModules()
+            setActivePinia(createPinia())
+            routerMock.push.mockReset()
+            client = await import('@/api/client')
+            routerMock.currentRoute.value = { name: 'page', fullPath: '/pricing', meta }
+            vi.spyOn(axios, 'post').mockRejectedValue(new AxiosError('HTTP 403', 'ERR_BAD_REQUEST', {}, null, { status: 403, data: {}, headers: {} }))
+            await expect(client.refreshAccessToken()).rejects.toThrow()
+            expect(routerMock.push).toHaveBeenCalledWith({ name: 'login' })
+        }
+        routerMock.currentRoute.value = { name: 'dashboard' }
+    })
+
     it('a network failure during refresh keeps the user signed in', async () => {
         vi.spyOn(axios, 'post').mockRejectedValue(new AxiosError('Network Error', 'ERR_NETWORK'))
         await expect(client.refreshAccessToken()).rejects.toThrow('Network Error')

@@ -91,6 +91,34 @@ describe('PaywallPage', () => {
         expect(router.currentRoute.value.name).toBe('dashboard')
     })
 
+    it('says inline why Continue with the free plan failed and lets the user retry', async () => {
+        const { wrapper, router } = await render()
+        billing.dismissPaywall.mockRejectedValueOnce({
+            response: { status: 503, data: {} },
+            displayMessage: 'Something went wrong on our end. Please try again.',
+        })
+        await wrapper.find('.pw-free-link').trigger('click')
+        await flushPromises()
+        expect(wrapper.find('.pw-error').attributes('role')).toBe('alert')
+        expect(wrapper.find('.pw-error').text()).toBe('Something went wrong on our end. Please try again.')
+        expect(wrapper.find('.pw-free-link').attributes('disabled')).toBeUndefined()
+        expect(router.currentRoute.value.name).toBe('paywall')
+
+        billing.dismissPaywall.mockResolvedValueOnce({ data: {} })
+        await wrapper.find('.pw-free-link').trigger('click')
+        await flushPromises()
+        expect(wrapper.find('.pw-error').exists()).toBe(false)
+        expect(router.currentRoute.value.name).toBe('dashboard')
+    })
+
+    it('falls back to its own words when the failure carries no message', async () => {
+        const { wrapper } = await render()
+        billing.dismissPaywall.mockRejectedValueOnce(new Error('Network Error'))
+        await wrapper.find('.pw-free-link').trigger('click')
+        await flushPromises()
+        expect(wrapper.find('.pw-error').text()).toBe("We couldn't switch you to the free plan. Please try again.")
+    })
+
     it('holds the cards until checkout is set up', async () => {
         const { wrapper } = await render({ billingReady: false })
         expect(cardButtons(wrapper).every((b) => b.attributes('disabled') !== undefined)).toBe(true)

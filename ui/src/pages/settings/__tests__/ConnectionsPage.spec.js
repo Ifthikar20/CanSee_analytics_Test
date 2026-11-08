@@ -151,3 +151,30 @@ describe('ConnectionsPage: back from Google Analytics', () => {
         expect(document.body.querySelectorAll('input[name="ga4-property"]')).toHaveLength(1)
     })
 })
+
+describe('ConnectionsPage: back from Search Console', () => {
+    it('makes the project named by website_id active before reading its status, then clears the query', async () => {
+        const { router, app } = await mountPage({ gsc: 'connected', website_id: SITE_B.id })
+        expect(app.activeWebsite.id).toBe(SITE_B.id)
+        expect(gscReads()).toEqual([`/search-console/${SITE_B.id}/status/`])
+        expect(toast.success).toHaveBeenCalledWith('Search Console connected.')
+        expect(router.currentRoute.value.query).toEqual({})
+    })
+
+    it('waits for the project list on a fresh load, then reads the returned project', async () => {
+        let resolveList
+        const websitesLoad = new Promise((resolve) => (resolveList = resolve))
+        const { app } = await mountPage({ gsc: 'select_property', website_id: SITE_B.id }, { list: [], active: null, websitesLoad })
+        expect(gscReads()).toEqual([])
+
+        resolveList({ data: [SITE_A, SITE_B] })
+        await flushPromises()
+        expect(app.activeWebsite.id).toBe(SITE_B.id)
+        expect(gscReads()).toEqual([`/search-console/${SITE_B.id}/status/`])
+    })
+
+    it('keeps unrelated query keys', async () => {
+        const { router } = await mountPage({ gsc: 'error', website_id: SITE_B.id, tab: 'x' })
+        expect(router.currentRoute.value.query).toEqual({ tab: 'x' })
+    })
+})
