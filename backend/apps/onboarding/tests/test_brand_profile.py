@@ -52,12 +52,12 @@ _THIN_SCAN = {
 }
 
 _GROUNDED = {
-    "industry": {"value": "Education technology for tutors",
+    "industry": {"value": "Lesson notes for tutors",
                  "evidence": "AI lesson notes for tutors"},
     "offerings": ["Session Recorder", "Parent Reports"],
     "audience": {"value": "Independent tutors and tutoring centres.",
                  "evidence": "Built for independent tutors and tutoring centres"},
-    "voice": {"value": "Plain-spoken and practical",
+    "voice": {"value": "No jargon, no fuss",
               "evidence": "No jargon, no fuss."},
 }
 
@@ -134,18 +134,18 @@ class TestProfileFillsEmptyFields:
         fake_claude.responses = {"brand_profile": json.dumps(_GROUNDED)}
         payload = _scan()
         assert payload.success is True
-        assert payload.industry == "Education technology for tutors"
+        assert payload.industry == "Lesson notes for tutors"
         assert payload.products == ["Session Recorder", "Parent Reports"]
         assert payload.audience == "Independent tutors and tutoring centres."
-        assert payload.voice == "Plain-spoken and practical"
+        assert payload.voice == "No jargon, no fuss"
 
     def test_answer_wrapped_in_prose_is_parsed(self, fake_claude):
         fake_claude.responses = {
             "brand_profile": "Here you go:\n```json\n" + json.dumps(_GROUNDED) + "\n```",
         }
         payload = _scan()
-        assert payload.industry == "Education technology for tutors"
-        assert payload.voice == "Plain-spoken and practical"
+        assert payload.industry == "Lesson notes for tutors"
+        assert payload.voice == "No jargon, no fuss"
 
     def test_one_call_with_page_text_isolated_as_untrusted(self, fake_claude):
         fake_claude.responses = {"brand_profile": json.dumps(_GROUNDED)}
@@ -163,6 +163,24 @@ class TestProfileFillsEmptyFields:
         assert "evidence" in call["prompt"]
         assert "empty" in call["prompt"]
 
+    def test_business_name_is_clipped_in_prompts(self, fake_claude):
+        fake_claude.responses = {"brand_profile": json.dumps(_GROUNDED)}
+        _scan({**_THIN_SCAN, "business_name": "TutorNote Lessons " + "y" * 300})
+        _scan({**_THIN_SCAN, "business_name": "T" * 300})
+        assert fake_claude.calls
+        for call in fake_claude.calls:
+            assert "y" * 50 not in call["prompt"]
+            assert "T" * 101 not in call["prompt"]
+        assert any("TutorNote Lessons" in c["prompt"] for c in fake_claude.calls)
+        assert any("T" * 100 in c["prompt"] for c in fake_claude.calls)
+
+    def test_prompt_states_the_word_rule(self, fake_claude):
+        fake_claude.responses = {"brand_profile": json.dumps(_GROUNDED)}
+        _scan()
+        prompt = _profile_calls(fake_claude)[0]["prompt"]
+        assert "at least 3 words" in prompt
+        assert "must appear in its quote" in prompt
+
     def test_usage_is_attributed_to_the_user(self, fake_claude):
         fake_claude.responses = {"brand_profile": json.dumps(_GROUNDED)}
         user = object()
@@ -175,7 +193,7 @@ class TestProfileFillsEmptyFields:
         _scan()
         topic_calls = [c for c in fake_claude.calls if c.get("role") == "topic_generation"]
         assert topic_calls
-        assert "Education technology for tutors" in topic_calls[0]["prompt"]
+        assert "Lesson notes for tutors" in topic_calls[0]["prompt"]
 
     def test_no_page_text_makes_no_call(self, fake_claude):
         fake_claude.responses = {"brand_profile": json.dumps(_GROUNDED)}
@@ -196,7 +214,7 @@ class TestHeuristicValuesKept:
         assert payload.products == ["Lesson Notes"]
         # Audience and voice have no heuristic source; they still fill.
         assert payload.audience == "Independent tutors and tutoring centres."
-        assert payload.voice == "Plain-spoken and practical"
+        assert payload.voice == "No jargon, no fuss"
 
 
 @pytest.mark.usefixtures("no_competitors", "logo")
@@ -224,6 +242,59 @@ class TestUngroundedOrInvalidOutput:
         # is not an offering; "lesson" is a whole word on the page.
         assert payload.products == ["lesson", "Parent Reports"]
 
+    def test_real_quote_with_unrelated_value_is_dropped(self, fake_claude):
+        # The quote is on the page, but it does not say what the value says.
+        answer = {
+            **_GROUNDED,
+            "industry": {"value": "Online marketplaces",
+                         "evidence": "Built for independent tutors and tutoring centres"},
+            "audience": {"value": "Fortune 500 enterprises",
+                         "evidence": "Built for independent tutors and tutoring centres"},
+            "voice": {"value": "Bold and edgy", "evidence": "No jargon, no fuss."},
+        }
+        fake_claude.responses = {"brand_profile": json.dumps(answer)}
+        payload = _scan()
+        assert (payload.industry, payload.audience, payload.voice) == ("", "", "")
+
+    def test_one_unsupported_word_drops_the_value(self, fake_claude):
+        answer = {**_GROUNDED, "audience": {
+            "value": "Independent tutors and enterprise schools",
+            "evidence": "Built for independent tutors and tutoring centres"}}
+        fake_claude.responses = {"brand_profile": json.dumps(answer)}
+        assert _scan().audience == ""
+
+    def test_value_of_only_small_words_is_dropped(self, fake_claude):
+        answer = {**_GROUNDED, "voice": {"value": "for the", "evidence": "No jargon, no fuss."}}
+        fake_claude.responses = {"brand_profile": json.dumps(answer)}
+        assert _scan().voice == ""
+
+    def test_plural_and_ing_forms_count_as_the_same_word(self, fake_claude):
+        answer = {**_GROUNDED, "audience": {
+            "value": "Independent tutor centre",
+            "evidence": "Built for independent tutors and tutoring centres"}}
+        fake_claude.responses = {"brand_profile": json.dumps(answer)}
+        assert _scan().audience == "Independent tutor centre"
+
+    def test_quote_needs_three_words(self, fake_claude):
+        # "Parent Reports" is on the page and long enough in characters,
+        # but two words prove nothing.
+        answer = {**_GROUNDED, "industry": {"value": "Parent Reports",
+                                            "evidence": "Parent Reports"}}
+        fake_claude.responses = {"brand_profile": json.dumps(answer)}
+        assert _scan().industry == ""
+
+    def test_values_are_sanitized(self, fake_claude):
+        answer = {
+            **_GROUNDED,
+            "industry": {"value": "Lesson\u200b notes\u202e for tutors",
+                         "evidence": "AI lesson notes for tutors"},
+            "offerings": ["Session Recorder\u200b", "Parent\u2066 Reports"],
+        }
+        fake_claude.responses = {"brand_profile": json.dumps(answer)}
+        payload = _scan()
+        assert payload.industry == "Lesson notes for tutors"
+        assert payload.products == ["Session Recorder", "Parent Reports"]
+
     def test_too_short_evidence_is_rejected(self, fake_claude):
         answer = {**_GROUNDED, "voice": {"value": "Warm", "evidence": "AI"}}
         fake_claude.responses = {"brand_profile": json.dumps(answer)}
@@ -247,11 +318,11 @@ class TestUngroundedOrInvalidOutput:
         long_offering = "Session Recorder"
         page = PAGE_TEXT + "\n" + " ".join(f"Plan{i}" for i in range(30)) + " " + ("x" * 150)
         answer = {
-            "industry": {"value": "word " * 60, "evidence": "AI lesson notes for tutors"},
+            "industry": {"value": "lesson notes " * 30, "evidence": "AI lesson notes for tutors"},
             "offerings": [long_offering] + [f"Plan{i}" for i in range(30)] + ["x" * 150],
             "audience": {"value": "tutors " * 200,
                          "evidence": "Built for independent tutors"},
-            "voice": {"value": "calm " * 100, "evidence": "No jargon, no fuss."},
+            "voice": {"value": "no fuss " * 100, "evidence": "No jargon, no fuss."},
         }
         fake_claude.responses = {"brand_profile": json.dumps(answer)}
         payload = _scan({**_THIN_SCAN, "page_text": page})
@@ -343,7 +414,7 @@ def test_payload_dict_carries_new_fields(fake_claude):
     fake_claude.responses = {"brand_profile": json.dumps(_GROUNDED)}
     data = to_dict(_scan())
     assert data["audience"] == "Independent tutors and tutoring centres."
-    assert data["voice"] == "Plain-spoken and practical"
+    assert data["voice"] == "No jargon, no fuss"
     assert data["logo_url"] == "https://tutornote.ai/apple-touch-icon.png"
-    assert data["industry"] == "Education technology for tutors"
+    assert data["industry"] == "Lesson notes for tutors"
     assert data["products"] == ["Session Recorder", "Parent Reports"]
