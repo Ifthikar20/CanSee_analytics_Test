@@ -567,3 +567,52 @@ describe('listNames', () => {
     expect(listNames(null)).toBe('')
   })
 })
+
+describe('the research plan: where the runs and the ceiling meet', () => {
+  const five = ENGINES.map((e) => ({ ...e, configured: true }))
+  const free = (remaining, over = {}) =>
+    status({
+      engines: five,
+      allowance: { cap_usd: '3.00', spent_usd: '0.00', exceeded: false, show_usd: false },
+      prompt_runs: { unlimited: false, limit: 100, used: 0, reserved: 0, remaining },
+      ...over,
+    })
+
+  it('says the ceiling limits it when the runs left pay for exactly the ceiling', () => {
+    // Ceiling 50 / 10 agents a prompt = 5 prompts; 25 runs / 5 engines = 5 prompts.
+    const fit = researchFit(free(25))
+    expect(fit.prompts).toBe(5)
+    expect(fit.limitedBy).toBe('ceiling')
+    expect(researchRunsLine(fit)).toBe('')
+    expect(researchRunsCost(fit, fit.prompts)).toBe('Up to 5 prompts × 5 AI engines = 25 free prompt runs; 25 left this month.')
+  })
+
+  it('says the runs limit it one run below', () => {
+    const fit = researchFit(free(24))
+    expect(fit.prompts).toBe(4)
+    expect(fit.limitedBy).toBe('runs')
+    expect(researchRunsLine(fit)).toBe('With 24 free prompt runs left and 5 AI engines set up, one research covers up to 4 prompts.')
+  })
+
+  it('says few runs, not none, with fewer runs left than engines', () => {
+    expect(researchFit(free(4)).short).toBe('few_runs')
+    expect(researchFit(free(1)).short).toBe('few_runs')
+    expect(researchFit(free(0)).short).toBe('no_runs')
+  })
+})
+
+describe('explicit values only', () => {
+  it('counts the allowance as used up only on exceeded === true', () => {
+    expect(workspaceBlock(status({ allowance: { exceeded: 'false', show_usd: true } }))).toBeNull()
+    expect(workspaceBlock(status({ allowance: { exceeded: 1, show_usd: true } }))).toBeNull()
+    expect(workspaceBlock(status({ allowance: { exceeded: true, show_usd: true } }))?.code).toBe('allowance_exceeded')
+  })
+
+  it('notes page one only for exactly one reliable page', () => {
+    const g = (reliable_pages) => setupSummary(status({ google: { configured: true, key_settings: [], reliable_pages } }), prod).google.note
+    expect(g(1)).toBe('page one only')
+    expect(g(0)).toBe('')
+    expect(g(2)).toBe('')
+    expect(g(undefined)).toBe('')
+  })
+})

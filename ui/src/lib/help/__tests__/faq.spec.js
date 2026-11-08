@@ -108,4 +108,10 @@ describe('searchFaq', () => {
     expect(searchFaq('runs free').map((it) => it.id)).toContain('plan-free')
     expect(searchFaq('zebra quantum')).toEqual([])
   })
+
+  it('drops an item that has only some of the words', () => {
+    expect(searchFaq('paywall').length).toBeGreaterThan(0)
+    expect(searchFaq('paywall zebra')).toEqual([])
+    expect(searchFaq('autopilot paused').map((it) => it.id)).toEqual(['ts-autopilot'])
+  })
 })

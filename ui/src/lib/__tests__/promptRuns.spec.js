@@ -209,3 +209,98 @@ describe('runsErrorText', () => {
         )
     })
 })
+
+describe('edge cases the screens rely on', () => {
+    it('never reads a boolean as a count', () => {
+        expect(normalizeRuns({ unlimited: false, limit: true, remaining: true })).toBeNull()
+        expect(normalizeRuns({ unlimited: false, limit: 20, remaining: false })).toMatchObject({ remaining: 20 })
+        expect(normalizeRuns({ unlimited: false, limit: 20, used: true, reserved: true, remaining: null })).toMatchObject({
+            used: 0,
+            reserved: 0,
+            remaining: 20,
+        })
+    })
+
+    it.each([
+        ['the string "false"', 'false'],
+        ['null', null],
+        ['zero', 0],
+    ])('reads only an explicit false as metered, not %s', (_, unlimited) => {
+        expect(normalizeRuns({ unlimited, limit: 20, remaining: 3 })).toBeNull()
+        expect(meteredRuns({ unlimited, limit: 20, remaining: 3 })).toBeNull()
+        expect(hidesUsd({ prompt_runs: { unlimited, limit: 20, remaining: 3 } })).toBe(false)
+        expect(runsLeftText({ unlimited, limit: 20, remaining: 3 })).toBe('')
+    })
+
+    it('treats a limit of zero as nothing left, and one left as singular', () => {
+        expect(normalizeRuns({ unlimited: false, limit: 0 })).toMatchObject({ limit: 0, remaining: 0 })
+        expect(runsLeftText({ unlimited: false, limit: 0 })).toBe('No free prompt runs left')
+        expect(runsUsedText({ unlimited: false, limit: 0, used: 0 })).toBe('0 of 0 free prompt runs used')
+        expect(runsNeeded(1, { unlimited: false, limit: 20, remaining: 1 })).toEqual({
+            enough: true,
+            text: 'Uses 1 of your 1 free prompt run left.',
+        })
+    })
+
+    it('says only how many are left when the limit is unknown', () => {
+        expect(runsNeeded(5, { unlimited: false, remaining: 3 })).toEqual({
+            enough: false,
+            text: 'This needs 5 free prompt runs and 3 are left this month. Choose fewer prompts or engines.',
+        })
+        expect(runsNeeded(2, { unlimited: false, remaining: 1 }).text).toBe(
+            'This needs 2 free prompt runs and 1 is left this month. Choose fewer prompts or engines.',
+        )
+        expect(runsNeeded(1, { unlimited: false, remaining: 0 })).toEqual({
+            enough: false,
+            text: "This month's free prompt runs are used up.",
+        })
+    })
+
+    it('rounds a fractional need down and ignores a negative one', () => {
+        expect(runsNeeded(6.9, FREE).text).toBe('Uses 6 of your 13 free prompt runs left.')
+        expect(runsNeeded(-4, FREE)).toBeNull()
+        expect(runsNeeded(true, FREE)).toBeNull()
+    })
+
+    it('reads an estimate only when it says unlimited is false', () => {
+        expect(estimateRuns({ needed: 6, remaining: 4, limit: 20 })).toBeNull()
+        expect(estimateRuns({ needed: 6, remaining: 4, limit: 20, unlimited: 'false' })).toBeNull()
+        expect(estimateRuns({ needed: 6, remaining: 4, limit: 20, unlimited: false })).toEqual({
+            enough: false,
+            text: 'This needs 6 free prompt runs and 4 of your 20 are left this month. Choose fewer prompts or engines.',
+        })
+        // A server verdict that is not a boolean never overrides the count.
+        expect(estimateRuns({ needed: 2, remaining: 4, limit: 20, unlimited: false, enough: 'no' }).enough).toBe(true)
+        expect(estimateRuns({ needed: 0, remaining: 4, limit: 20, unlimited: false })).toBeNull()
+    })
+
+    it('words an exhausted refusal as used up, whatever remaining the details carry', () => {
+        expect(
+            runsErrorText('prompt_runs_exhausted', { details: { remaining: 5, limit: 20, resets_at: FREE.resets_at } }),
+        ).toBe("You have used this month's 20 free prompt runs. They renew on November 30.")
+        expect(runsErrorText('prompt_runs_exhausted', { message: '   ', details: { limit: 20 } })).toBe(
+            "You have used this month's 20 free prompt runs.",
+        )
+        expect(runsErrorText('insufficient_prompt_runs', { message: 42, details: { needed: 3, remaining: 1 } })).toBe(
+            'This needs 3 free prompt runs and 1 is left this month. Choose fewer prompts or engines.',
+        )
+    })
+
+    it('names the renewal day by the UTC calendar, whatever the browser time zone', () => {
+        // Node reads TZ again whenever it changes.
+        const env = globalThis.process.env
+        const before = env.TZ
+        try {
+            // 02:00 UTC on December 1 is still November 30 in New York.
+            env.TZ = 'America/New_York'
+            expect(renewDate('2026-12-01T02:00:00Z')).toBe('December 1')
+            expect(renewSentence({ resets_at: '2026-12-01T00:00:00+00:00' })).toBe('They renew on December 1.')
+            // 23:00 UTC on November 30 is already December 1 in Tokyo.
+            env.TZ = 'Asia/Tokyo'
+            expect(renewDate('2026-11-30T23:00:00Z')).toBe('November 30')
+        } finally {
+            if (before === undefined) delete env.TZ
+            else env.TZ = before
+        }
+    })
+})

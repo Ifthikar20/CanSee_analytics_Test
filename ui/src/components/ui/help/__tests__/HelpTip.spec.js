@@ -116,3 +116,38 @@ describe('HelpTip', () => {
     expect(tip().textContent).toContain(TEXT)
   })
 })
+
+describe('HelpTip pinned by a click', () => {
+  async function hoverAway(button) {
+    button.element.dispatchEvent(new PointerEvent('pointerleave', { bubbles: false, pointerType: 'mouse', clientX: 500, clientY: 500 }))
+    // reka starts tracking the pointer on the next tick.
+    await settle()
+    document.body.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerType: 'mouse', clientX: 900, clientY: 900 }))
+    await settle()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await settle()
+  }
+
+  it('closes when the pointer leaves a tip opened by hovering', async () => {
+    const w = mountTip()
+    const button = w.find('button')
+    await button.trigger('pointermove', { pointerType: 'mouse' })
+    await new Promise((resolve) => setTimeout(resolve, 450))
+    await settle()
+    expect(tip()).not.toBeNull()
+    await hoverAway(button)
+    expect(tip()).toBeNull()
+  })
+
+  it('stays open when the pointer leaves a tip opened by a click', async () => {
+    const w = mountTip()
+    const button = w.find('button')
+    await button.trigger('pointermove', { pointerType: 'mouse' })
+    await button.trigger('click')
+    await settle()
+    expect(tip()).not.toBeNull()
+    await hoverAway(button)
+    expect(tip()).not.toBeNull()
+    expect(tip().textContent).toContain(TEXT)
+  })
+})

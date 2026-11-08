@@ -73,3 +73,38 @@ describe('useSessionRuns', () => {
     expect(run(() => useSessionRuns()).value).toBeNull()
   })
 })
+
+describe('useHideUsd edge cases', () => {
+  it('reads a getter that throws as "says nothing", never as "hide"', () => {
+    setActivePinia(createPinia())
+    const hide = run(() =>
+      useHideUsd(() => {
+        throw new Error('boom')
+      }),
+    )
+    expect(hide.value).toBe(false)
+  })
+
+  it('ignores a getter that is not a function', () => {
+    setActivePinia(createPinia())
+    expect(run(() => useHideUsd({ prompt_runs: FREE }, null)).value).toBe(false)
+  })
+
+  it('hides dollars for a free session even when every screen payload says paid', () => {
+    setActivePinia(createPinia())
+    const auth = useAuthStore()
+    auth.session = { limits: { prompt_runs: FREE } }
+    const hide = run(() => useHideUsd(() => ({ allowance: { show_usd: true }, prompt_runs: PAID })))
+    expect(hide.value).toBe(true)
+  })
+
+  it('keeps dollars for a session without a runs block or limits', () => {
+    setActivePinia(createPinia())
+    const auth = useAuthStore()
+    auth.session = { limits: {} }
+    const hide = run(() => useHideUsd())
+    expect(hide.value).toBe(false)
+    auth.session = null
+    expect(hide.value).toBe(false)
+  })
+})
