@@ -13,6 +13,9 @@ from django.conf import settings
 
 NGINX_CONFS = ["nginx.prod.conf", "nginx.http.conf"]
 NONCE_SOURCE = "'nonce-$request_id'"
+# Locations that serve an HTML document: the SPA shell and the
+# prerendered blog pages (docker/nginx, ``location ^~ /blog``).
+DOCUMENT_LOCATIONS = ("= /index.html", "^~ /blog")
 SUB_FILTER = """sub_filter '<script>' '<script nonce="$request_id">';"""
 
 
@@ -60,30 +63,42 @@ def test_spa_locations_repeat_every_server_security_header(name):
     assert any(h.startswith("add_header Content-Security-Policy") for h in server)
     assert any(h.startswith("add_header X-Frame-Options DENY") for h in server)
     locations = _spa_locations(text)
-    assert set(locations) == {"= /index.html", r"~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$"}
+    assert set(locations) == {
+        *DOCUMENT_LOCATIONS, r"~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$",
+    }
 
     for where, block in locations.items():
         headers = _add_headers(block)
         assert headers, where
         for header in server:
-            if where == "= /index.html" and header.startswith("add_header Content-Security-Policy"):
+            if where in DOCUMENT_LOCATIONS and header.startswith("add_header Content-Security-Policy"):
                 header = header.replace("script-src 'self' ", f"script-src 'self' {NONCE_SOURCE} ", 1)
             assert header in headers, (where, header)
 
 
 @pytest.mark.parametrize("name", NGINX_CONFS)
-def test_the_spa_document_nonces_its_own_inline_scripts(name):
+@pytest.mark.parametrize("where", DOCUMENT_LOCATIONS)
+def test_the_spa_document_nonces_its_own_inline_scripts(name, where):
     text = _conf(name)
-    document = _spa_locations(text)["= /index.html"]
+    document = _spa_locations(text)[where]
     csp = next(h for h in _add_headers(document) if "Content-Security-Policy" in h)
 
     assert SUB_FILTER in document and "sub_filter_once off;" in document
     assert f"script-src 'self' {NONCE_SOURCE} https://consent.cookiebot.com" in csp
     assert "'unsafe-inline'" not in csp.split("script-src", 1)[1].split(";", 1)[0]
     assert "frame-ancestors 'none'" in csp and "frame-src https:" in csp
-    # The nonce is per response: nowhere else, and never cached.
-    assert text.count(NONCE_SOURCE) == 1
     assert 'add_header Cache-Control "no-cache, no-store, must-revalidate";' in document
+
+
+@pytest.mark.parametrize("name", NGINX_CONFS)
+def test_the_nonce_appears_only_in_document_locations(name):
+    # The nonce is per response and never cached: exactly once in each
+    # location that serves an HTML document, and nowhere else.
+    text = _conf(name)
+    locations = _spa_locations(text)
+    assert text.count(NONCE_SOURCE) == len(DOCUMENT_LOCATIONS)
+    for where in DOCUMENT_LOCATIONS:
+        assert locations[where].count(NONCE_SOURCE) == 1, where
 
 
 def test_hsts_reaches_the_spa_only_on_the_tls_config():

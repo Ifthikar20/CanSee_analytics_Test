@@ -6,6 +6,8 @@ import { RouterView, createMemoryHistory, createRouter } from 'vue-router'
 import { useAgentUiStore } from '@/stores/agentUi'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
+import { useHelpStore } from '@/stores/help'
+import { useHintsStore } from '@/stores/hints'
 import { useShellTakeover } from '@/lib/shell/takeover'
 import shellSource from '../AppShell.vue?raw'
 
@@ -459,6 +461,20 @@ describe('AppShell state', () => {
     await flushPromises()
     expect(ui.drawerOpen).toBe(false)
     expect(document.body.querySelector('.ag-portal.ag-drawer')).toBeNull()
+  })
+
+  it('offers "Show tips again" in the help drawer and resets the seen tips', async () => {
+    await setup()
+    const hints = useHintsStore()
+    hints.seen = ['board-add-widget']
+    useHelpStore().open()
+    await flushPromises()
+    const button = [...document.body.querySelectorAll('button')]
+      .find((b) => b.textContent.trim() === 'Show tips again')
+    expect(button).toBeTruthy()
+    button.click()
+    await flushPromises()
+    expect(hints.seen).toEqual([])
   })
 
   it('opens the shortcuts dialog from the store', async () => {
