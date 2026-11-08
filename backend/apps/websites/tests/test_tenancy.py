@@ -153,6 +153,22 @@ class TestDowngradedCreator:
         assert client_for(admin).delete(detail(website)).status_code == 403
         assert client_for(admin).get(detail(website)).status_code == 200
 
+    def test_write_scoped_created_list_drops_the_project(self, org, creator, project):
+        """Chat and SMS pick write targets from created_by_qs_with_role."""
+        personal = WebsiteFactory(user=creator)
+        assert set(WebsiteService.created_by_qs_with_role(creator, "member")) == {
+            project, personal,
+        }
+
+        change_role(org, creator, "viewer")
+        creator = type(creator).objects.get(pk=creator.pk)
+
+        assert set(WebsiteService.created_by_qs(creator)) == {project, personal}
+        assert list(WebsiteService.created_by_qs_with_role(creator, "member")) == [personal]
+        assert set(WebsiteService.created_by_qs_with_role(creator, "viewer")) == {
+            project, personal,
+        }
+
 
 class TestViewer:
     def test_reads_work(self, org, project):

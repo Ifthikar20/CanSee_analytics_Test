@@ -313,3 +313,47 @@ def test_twiml_escapes_and_empty_response():
     out = sms_service.twiml('5 < 10 & "up"')
     assert "&lt;" in out and "&amp;" in out
     assert "<Message>" in out
+
+
+def _org_creator(role):
+    """A user who created an org project and now holds ``role`` in that org."""
+    from apps.accounts.models import Organization, OrganizationMember
+
+    owner = UserFactory()
+    org = Organization.objects.create(name="Acme", slug="acme-sms", owner=owner)
+    OrganizationMember.objects.create(organization=org, user=owner, role="owner")
+    creator = UserFactory()
+    member = OrganizationMember.objects.create(
+        organization=org, user=creator, role="member",
+    )
+    website = WebsiteFactory(user=creator, organization=org)
+    member.role = role
+    member.save(update_fields=["role"])
+    return creator, website
+
+
+@pytest.mark.django_db
+def test_inbound_question_from_a_downgraded_creator_is_refused(client, sms_on):
+    """Answering spends engine runs; a viewer is refused, as in the app."""
+    from apps.notifications.api.v1.sms_webhooks import VIEW_ONLY
+
+    creator, _website = _org_creator("viewer")
+    _sub(creator)
+    with patch("apps.assistant.services.orchestrator.answer") as ans:
+        resp = _post(client, {"From": PHONE, "Body": "how is my visibility?"})
+    assert resp.status_code == 200
+    assert VIEW_ONLY in resp.content.decode()
+    ans.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_inbound_question_from_a_member_creator_is_answered(client, sms_on):
+    creator, website = _org_creator("member")
+    _sub(creator)
+    with patch(
+        "apps.assistant.services.orchestrator.answer",
+        return_value={"answer": "Visibility is 6.3%.", "grounded": True},
+    ) as ans:
+        resp = _post(client, {"From": PHONE, "Body": "how is my visibility?"})
+    assert "Visibility is 6.3%." in resp.content.decode()
+    assert ans.call_args.kwargs["website"].id == website.id
