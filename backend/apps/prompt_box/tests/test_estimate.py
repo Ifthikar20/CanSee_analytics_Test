@@ -1,6 +1,8 @@
 """Ask AI estimate: validation words, bounds, blockers, tracked detection (contract 4)."""
 import pytest
 
+from apps.metering.services import prompt_runs
+from apps.metering.tests.prompt_run_support import make_paid, use_runs
 from apps.prompt_box.models import PromptBoxRun
 from apps.prompt_box.services import runs
 from apps.prompt_box.tests.support import *  # noqa: F403
@@ -66,6 +68,7 @@ def test_the_estimate_payload(website, user, engines):
         "engines": [{"key": "chatgpt", "label": "ChatGPT"}, {"key": "claude", "label": "Claude"}],
         "allowance": {"unlimited": False, "left_usd": "1.00"},
         "daily": {"limit": 100, "left": 100},
+        "prompt_runs": prompt_runs.estimate_block(user, website, 6),
         "tracked": {"prompt_id": None, "brand_prompt_id": None},
         "blockers": [],
         "can_run": True,
@@ -99,7 +102,10 @@ def test_no_engine_configured(website, user):
 
 
 def test_allowance_blockers(website, user, engines, monkeypatch):
+    # A paid account sees its allowance in dollars.
+    make_paid(user)
     engines.enable("chatgpt", "claude")
+    monkeypatch.setattr("core.ai_tracking.effective_ai_cap", lambda u: 1.0)
     monkeypatch.setattr("core.ai_tracking.month_to_date_cost", lambda u: 0.9)
     est = runs.estimate(website, user, body())
     assert est["blockers"] == [{
@@ -112,6 +118,42 @@ def test_allowance_blockers(website, user, engines, monkeypatch):
     assert est["blockers"] == [
         {"code": "allowance_exceeded", "message": "You have used your monthly AI allowance."}]
     assert est["can_run"] is False
+
+
+def test_free_accounts_see_their_allowance_without_dollars(website, user, engines, monkeypatch):
+    engines.enable("chatgpt", "claude")
+    monkeypatch.setattr("core.ai_tracking.effective_ai_cap", lambda u: 3.0)
+    monkeypatch.setattr("core.ai_tracking.month_to_date_cost", lambda u: 2.9)
+    est = runs.estimate(website, user, body())
+    assert est["blockers"] == [
+        {"code": "insufficient_allowance", "message": prompt_runs.ALLOWANCE_SHORT_FREE}]
+    monkeypatch.setattr("core.ai_tracking.month_to_date_cost", lambda u: 3.0)
+    est = runs.estimate(website, user, body())
+    assert est["blockers"] == [
+        {"code": "allowance_exceeded", "message": prompt_runs.ALLOWANCE_USED_FREE}]
+
+
+def test_each_answer_is_a_prompt_run(website, user, engines, monkeypatch):
+    engines.enable("chatgpt", "claude")
+    monkeypatch.setattr("core.ai_tracking.effective_ai_cap", lambda u: 0.0)
+    est = runs.estimate(website, user, body())
+    assert est["prompt_runs"] == {"needed": 6, "remaining": 20, "limit": 20, "unlimited": False,
+                                  "enough": True, "resets_at": est["prompt_runs"]["resets_at"]}
+    use_runs(user, 16, website)
+    est = runs.estimate(website, user, body())
+    assert est["blockers"] == [{
+        "code": "insufficient_prompt_runs",
+        "message": "This needs 6 free prompt runs and 4 of your 20 are left this month. "
+                   "Choose fewer prompts or engines.",
+    }]
+    assert est["can_run"] is False
+    use_runs(user, 20, website)
+    with pytest.raises(CanseeException) as caught:
+        runs.create_run(website, user, body(), {"answers": 6, "ai_usd_max": "1"})
+    assert (caught.value.code, caught.value.status_code) == ("prompt_runs_exhausted", 403)
+    assert caught.value.details["needed"] == 6
+    make_paid(user)
+    assert runs.estimate(website, user, body())["prompt_runs"]["unlimited"] is True
 
 
 def test_an_unlimited_allowance(website, user, engines, monkeypatch):

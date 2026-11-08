@@ -23,11 +23,19 @@ def _migrate(targets):
     return executor.loader.project_state(targets).apps
 
 
+def _leaves():
+    """Every app's latest migration, so the fixture puts back migrations
+    that came after 0003 too."""
+    executor = MigrationExecutor(connection)
+    return executor.loader.graph.leaf_nodes()
+
+
 @pytest.fixture
 def at_0002():
+    leaves = _leaves()
     apps = _migrate(BEFORE)
     yield apps
-    _migrate(AFTER)
+    _migrate(leaves)
 
 
 @pytest.mark.django_db(transaction=True)

@@ -17,6 +17,8 @@ from apps.insights.models import AnswerAnalysis, InsightRun
 from apps.insights.services import runs
 from apps.insights.tests.support import *  # noqa: F403 - fixtures
 from apps.insights.tests.support import answer, fake_kind, track
+from apps.metering.services import prompt_runs
+from apps.metering.tests.prompt_run_support import make_paid, use_runs
 from core.ai_tracking import record_usage
 from core.exceptions import CanseeException
 
@@ -101,6 +103,8 @@ def test_a_free_run_has_no_upper_bound_warning_and_zero_confirm(website, user, k
 
 
 def test_allowance_blockers(website, user, monkeypatch):
+    # A paid account sees its allowance in dollars.
+    make_paid(user)
     install(monkeypatch, fake_kind(calls=2, usd="0.5000"))
     allowance(monkeypatch, cap=1.0, spent=0.8)
     est = runs.estimate(website, user, "fake_kind", {})
@@ -119,6 +123,51 @@ def test_allowance_blockers(website, user, monkeypatch):
         runs.create_run(website, user, "fake_kind", {},
                         {"ai_calls": 2, "ai_usd_max": "0.5000", "google_pages": 0})
     assert (exc.value.code, exc.value.status_code) == ("allowance_exceeded", 403)
+
+
+def test_free_accounts_see_their_allowance_without_dollars(website, user, monkeypatch):
+    install(monkeypatch, fake_kind(calls=2, usd="0.5000"))
+    allowance(monkeypatch, cap=3.0, spent=2.8)
+    est = runs.estimate(website, user, "fake_kind", {})
+    assert est["blockers"] == [{"code": "insufficient_allowance",
+                                "message": prompt_runs.ALLOWANCE_SHORT_FREE}]
+    allowance(monkeypatch, cap=3.0, spent=3.0)
+    est = runs.estimate(website, user, "fake_kind", {})
+    assert est["blockers"] == [{"code": "allowance_exceeded",
+                                "message": prompt_runs.ALLOWANCE_USED_FREE}]
+
+
+def test_a_kind_that_asks_engines_needs_prompt_runs(website, user, monkeypatch):
+    from apps.insights.services import shopping
+
+    allowance(monkeypatch, cap=0.0, spent=0.0)
+    install(monkeypatch, fake_kind(calls=4, usd="0.1000"))
+    est = runs.estimate(website, user, "fake_kind", {})
+    # A kind that names no prompt runs (Google and Claude only) needs none.
+    assert est["prompt_runs"]["needed"] == 0 and est["can_run"] is True
+
+    original = runs.KINDS["fake_kind"].estimate
+
+    def with_runs(website, user, plan):
+        return {**original(website, user, plan), "prompt_runs": 4}
+
+    monkeypatch.setitem(runs.KINDS, "fake_kind",
+                        dataclasses.replace(runs.KINDS["fake_kind"], estimate=with_runs))
+    use_runs(user, 18, website)
+    est = runs.estimate(website, user, "fake_kind", {})
+    assert est["prompt_runs"]["needed"] == 4 and est["prompt_runs"]["remaining"] == 2
+    assert [b["code"] for b in est["blockers"]] == ["insufficient_prompt_runs"]
+    with pytest.raises(CanseeException) as exc:
+        runs.create_run(website, user, "fake_kind", {},
+                        {"ai_calls": 4, "ai_usd_max": "0.1000", "google_pages": 0})
+    assert (exc.value.code, exc.value.status_code) == ("insufficient_prompt_runs", 403)
+    assert exc.value.details["remaining"] == 2
+    # Shopping checks name their engine answers as prompt runs.
+    from types import SimpleNamespace
+
+    plan = shopping.ShoppingPlan(products=[SimpleNamespace(queries=["a", "b"])],
+                                 engines=["chatgpt", "claude"], google=False)
+    assert shopping.estimate(website, user, plan)["prompt_runs"] == plan.answers == 4
 
 
 def test_daily_google_limit_blocks(website, user, monkeypatch, settings, cache_clear):

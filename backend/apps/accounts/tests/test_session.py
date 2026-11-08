@@ -27,6 +27,9 @@ class TestSessionLimits:
         settings.PAYWALL_ENABLED = True
         client, user = auth_client
         data = client.get(SESSION_URL).json()["data"]
+        runs = data["limits"].pop("prompt_runs")
+        assert (runs["unlimited"], runs["limit"], runs["used"], runs["remaining"]) == (
+            False, 20, 0, 20)
         assert data["limits"] == {
             "projects": 1,
             "tracked_prompts": {"limit": 5, "used": 0},
@@ -47,6 +50,7 @@ class TestSessionLimits:
         )
         data = client.get(SESSION_URL).json()["data"]
         assert data["subscription"]["is_trialing"] is True
+        assert data["limits"].pop("prompt_runs")["unlimited"] is True
         # Trialing grants the Pro feature set; only projects stay at the
         # free allowance until the subscription is ACTIVE.
         assert data["limits"] == {
@@ -67,6 +71,7 @@ class TestSessionLimits:
             current_period_end=timezone.now() + timedelta(days=30),
         )
         data = client.get(SESSION_URL).json()["data"]
+        assert data["limits"].pop("prompt_runs")["unlimited"] is True
         assert data["limits"] == {
             "projects": 5,
             "tracked_prompts": {"limit": 100, "used": 0},
@@ -78,6 +83,9 @@ class TestSessionLimits:
         settings.PAYWALL_ENABLED = False
         client, user = auth_client
         data = client.get(SESSION_URL).json()["data"]
+        # The free plan's prompt runs follow the AI allowance's plan, which
+        # the paywall switch does not lift.
+        assert data["limits"].pop("prompt_runs")["limit"] == 20
         assert data["limits"] == {
             "projects": -1,
             "tracked_prompts": {"limit": -1, "used": 0},

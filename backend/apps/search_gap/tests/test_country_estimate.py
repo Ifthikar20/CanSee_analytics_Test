@@ -7,6 +7,8 @@ from decimal import Decimal
 import pytest
 from django.urls import reverse
 
+from apps.metering.services import prompt_runs
+from apps.metering.tests.prompt_run_support import make_paid, use_runs
 from apps.search_gap.services import country_checks
 from apps.search_gap.services.country_checks import estimate, parse_confirm, validate_request
 from apps.search_gap.tests.country_support import *  # noqa: F403
@@ -192,6 +194,8 @@ def test_daily_quota_left(website, user, prompts, fake_serp):
 
 
 def test_allowance_enough_insufficient_exceeded_unlimited(website, user, prompts, engines, allowance):
+    # A paid account sees its allowance in dollars.
+    make_paid(user)
     engines.enable("chatgpt", "claude")
 
     allowance(5.0, 0.92)
@@ -221,6 +225,47 @@ def test_allowance_enough_insufficient_exceeded_unlimited(website, user, prompts
     est = _estimate(website, user, prompts)
     assert est["allowance"] == {"unlimited": True, "cap_usd": None, "left_usd": None, "enough": True}
     assert est["can_run"] is True
+
+
+def test_free_accounts_see_their_allowance_without_dollars(website, user, prompts, engines,
+                                                           allowance):
+    engines.enable("chatgpt", "claude")
+    allowance(3.0, 2.9)
+    est = _estimate(website, user, prompts)
+    assert est["blockers"] == [
+        {"code": "insufficient_allowance", "message": prompt_runs.ALLOWANCE_SHORT_FREE}]
+    allowance(3.0, 3.0)
+    est = _estimate(website, user, prompts)
+    assert est["blockers"] == [
+        {"code": "allowance_exceeded", "message": prompt_runs.ALLOWANCE_USED_FREE}]
+    assert not any("$" in b["message"] for b in est["blockers"])
+
+
+def test_the_estimate_counts_prompt_runs(website, user, prompts, engines, allowance):
+    engines.enable("chatgpt", "claude")
+    allowance(0.0, 0.0)
+    est = _estimate(website, user, prompts)
+    answers = est["engines"]["answers"]
+    assert est["prompt_runs"]["needed"] == answers
+    assert (est["prompt_runs"]["remaining"], est["prompt_runs"]["limit"]) == (20, 20)
+    assert est["can_run"] is True
+
+    use_runs(user, 20 - answers + 1, website)
+    est = _estimate(website, user, prompts)
+    assert [b["code"] for b in est["blockers"]] == ["insufficient_prompt_runs"]
+    assert est["blockers"][0]["message"] == (
+        f"This needs {answers} free prompt runs and {answers - 1} of your 20 are left this "
+        "month. Choose fewer prompts or engines.")
+
+    use_runs(user, 20, website)
+    est = _estimate(website, user, prompts)
+    assert [b["code"] for b in est["blockers"]] == ["prompt_runs_exhausted"]
+    with pytest.raises(CanseeException) as caught:
+        country_checks.create_run(website, user, validate_request(website, body_for(
+            prompts, ["gb", "de"], ["chatgpt", "claude"])), {
+            "google_pages": 99, "engine_answers": 99, "ai_usd_max": Decimal("9")})
+    assert (caught.value.code, caught.value.status_code) == ("prompt_runs_exhausted", 403)
+    assert (caught.value.details["remaining"], caught.value.details["needed"]) == (0, answers)
 
 
 def test_an_active_check_blocks_another(website, user, prompts, engines):

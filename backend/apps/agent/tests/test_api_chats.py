@@ -85,6 +85,8 @@ def test_status_answers_while_disabled_and_reports_configuration(api):
     ]
     assert body["allowance"] == {
         "cap_usd": 1.0, "spent_usd": 0.0, "exceeded": False, "warning": False,
+        # A free account counts prompt runs; its dollar cap is not shown.
+        "show_usd": False,
     }
 
 
