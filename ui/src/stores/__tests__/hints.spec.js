@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { nextTick } from 'vue'
+import { effectScope, nextTick, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { resetHints, useHintsStore } from '@/stores/hints'
+import { holdHints, resetHints, useHintsStore } from '@/stores/hints'
 import { hintsKey, loadHintState } from '@/lib/help/hints'
 
 function signIn({ id = 7, role = '', onboarding = false } = {}) {
@@ -125,5 +125,42 @@ describe('resetHints', () => {
   it('does nothing before Pinia is installed', () => {
     setActivePinia(undefined)
     expect(resetHints()).toBe(false)
+  })
+})
+
+describe('holdHints', () => {
+  it('holds every hint while its dialog is open and releases on close or unmount', async () => {
+    signIn()
+    const hints = useHintsStore()
+    hints.register('board.ask-ai')
+    const open = ref(false)
+    const other = ref(true)
+    const scope = effectScope()
+    scope.run(() => {
+      holdHints(() => open.value)
+      holdHints(() => other.value)
+    })
+    expect(hints.active).toBeNull()
+
+    other.value = false
+    await nextTick()
+    expect(hints.active).toBe('board.ask-ai')
+
+    open.value = true
+    await nextTick()
+    expect(hints.blockedBy).toBe('suspended')
+    expect(hints.active).toBeNull()
+
+    scope.stop()
+    expect(hints.active).toBe('board.ask-ai')
+    // Held, not dismissed: it is still unseen.
+    expect(hints.seen).toEqual([])
+  })
+
+  it('does nothing before Pinia is installed', () => {
+    setActivePinia(undefined)
+    const scope = effectScope()
+    expect(() => scope.run(() => holdHints(() => true))).not.toThrow()
+    scope.stop()
   })
 })

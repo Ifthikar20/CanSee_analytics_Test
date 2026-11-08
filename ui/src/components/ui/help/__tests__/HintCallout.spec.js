@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -5,6 +8,8 @@ import { h, nextTick, ref } from 'vue'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui'
 import HintCallout from '../HintCallout.vue'
 import TipButton from '../TipButton.vue'
+import AddProjectDialog from '@/components/projects/AddProjectDialog.vue'
+import ShortcutsDialog from '@/components/agent/common/ShortcutsDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAgentUiStore } from '@/stores/agentUi'
 import { useHintsStore } from '@/stores/hints'
@@ -135,5 +140,73 @@ describe('HintCallout', () => {
     expect(menu).not.toBeNull()
     // An anchored menu is positioned; one without an anchor stays at -200%.
     expect(menu.parentElement.getAttribute('style')).not.toContain('-200%')
+  })
+})
+
+describe('HintCallout under dialogs', () => {
+  // The hint and an app-level dialog side by side, as AppShell renders them.
+  function mountWith(dialog) {
+    return mount(
+      {
+        setup: () => () => [
+          h(HintCallout, { hint: 'board.ask-ai' }, () => h('textarea', { 'aria-label': 'Question' })),
+          dialog(),
+        ],
+      },
+      { attachTo: document.body, global: { stubs: { RouterLink: true } } },
+    )
+  }
+
+  it('hides while Add a project is open and comes back, unseen, when it closes', async () => {
+    signIn()
+    const ui = useAgentUiStore()
+    mountWith(() => h(AddProjectDialog, { open: ui.addProjectOpen, 'onUpdate:open': (v) => ui.setAddProjectOpen(v) }))
+    await settle()
+    expect(callout()).not.toBeNull()
+
+    ui.openAddProject()
+    await settle()
+    expect(document.body.querySelector('.modal-overlay')).not.toBeNull()
+    expect(callout()).toBeNull()
+
+    // A press inside the modal does not use up the hint.
+    document.body.querySelector('.modal-card input').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    ui.setAddProjectOpen(false)
+    await settle()
+    expect(callout()).not.toBeNull()
+    expect(loadHintState('7').seen).toEqual([])
+  })
+
+  it('hides while Keyboard shortcuts is open, so Got it is never behind the modal layer', async () => {
+    signIn()
+    const ui = useAgentUiStore()
+    mountWith(() => h(ShortcutsDialog, { open: ui.shortcutsOpen, 'onUpdate:open': (v) => ui.setShortcutsOpen(v) }))
+    await settle()
+    expect(callout()).not.toBeNull()
+
+    ui.setShortcutsOpen(true)
+    await settle()
+    expect(document.body.querySelector('.ag-dialog')).not.toBeNull()
+    expect(callout()).toBeNull()
+
+    ui.setShortcutsOpen(false)
+    await settle()
+    expect(callout()).not.toBeNull()
+    expect(loadHintState('7').seen).toEqual([])
+  })
+
+  it('stacks the coachmark below menus and dialogs, and tooltips above them', () => {
+    // Read as text: Vitest does not process CSS imports.
+    const helpCss = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../help.css'), 'utf8')
+    const zOf = (selector) => {
+      const block = helpCss.match(new RegExp(`(^|\\n)${selector.replace('.', '\\.')} \\{([^}]*)\\}`))
+      return Number(block[2].match(/z-index:\s*(\d+)/)[1])
+    }
+    const hint = zOf('.cs-hint')
+    // Above the page (.app-frame is 0); below the lowest menu (50) and
+    // dialog layers (analytics 60, agent overlay 90, BaseModal 1000).
+    expect(hint).toBeGreaterThan(0)
+    expect(hint).toBeLessThan(50)
+    expect(zOf('.cs-tooltip')).toBe(1100)
   })
 })
