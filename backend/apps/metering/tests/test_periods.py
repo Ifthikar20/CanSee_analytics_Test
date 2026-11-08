@@ -70,3 +70,40 @@ class TestBillingPeriod:
 
     def test_none_user_gets_calendar_month(self):
         assert billing_period_for(None).source == "calendar"
+
+    @freeze_time("2026-09-10 00:00:00")
+    def test_a_period_ends_at_its_end_instant(self):
+        # The window is [start, end): at the end instant the next window
+        # starts, so the old cycle no longer applies.
+        user = UserFactory(plan="individual")
+        Subscription.objects.create(
+            user=user,
+            plan="individual",
+            status=SubscriptionStatus.ACTIVE,
+            current_period_start=datetime(2026, 8, 10, tzinfo=UTC),
+            current_period_end=datetime(2026, 9, 10, tzinfo=UTC),
+        )
+        period = billing_period_for(user)
+        assert period.source == "calendar"
+        assert period.start == datetime(2026, 9, 1, tzinfo=UTC)
+
+    @freeze_time("2026-08-10 00:00:00")
+    def test_a_period_starts_at_its_start_instant(self):
+        user = UserFactory(plan="individual")
+        Subscription.objects.create(
+            user=user,
+            plan="individual",
+            status=SubscriptionStatus.TRIALING,
+            current_period_start=datetime(2026, 8, 10, tzinfo=UTC),
+            current_period_end=datetime(2026, 9, 10, tzinfo=UTC),
+        )
+        assert billing_period_for(user).source == "subscription"
+
+    @freeze_time("2026-12-31 23:59:59")
+    def test_the_last_second_of_the_year_is_still_december(self):
+        start, end = month_bounds()
+        assert (start, end) == (datetime(2026, 12, 1, tzinfo=UTC), datetime(2027, 1, 1, tzinfo=UTC))
+
+    def test_month_bounds_take_an_explicit_instant(self):
+        start, end = month_bounds(datetime(2027, 1, 1, 0, 0, tzinfo=UTC))
+        assert (start, end) == (datetime(2027, 1, 1, tzinfo=UTC), datetime(2027, 2, 1, tzinfo=UTC))

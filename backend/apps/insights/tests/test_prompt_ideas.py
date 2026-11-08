@@ -355,6 +355,22 @@ def test_track_needs_a_prompt_run_per_engine(website, user, engines, scans, monk
     assert Prompt.objects.count() == prompts
 
 
+def test_track_refuses_on_runs_before_the_hidden_dollar_backstop(
+        website, user, engines, scans, monkeypatch):
+    # Short of runs and of the hidden allowance at once: a free account is
+    # told about its runs, never the dollar backstop, and nothing is made.
+    idea = an_idea(website)
+    monkeypatch.setattr("core.ai_tracking.effective_ai_cap", lambda u: 3.0)
+    monkeypatch.setattr("core.ai_tracking.month_to_date_cost", lambda u: 3.0)
+    use_runs(user, 20, website)
+    prompts = Prompt.objects.count()
+    with pytest.raises(CanseeException) as exc:
+        prompt_ideas.track(website, user, idea, {"ai_usd_max": "0.0600"})
+    assert (exc.value.code, exc.value.status_code) == ("prompt_runs_exhausted", 403)
+    assert "$" not in exc.value.message
+    assert Prompt.objects.count() == prompts
+
+
 def test_a_prompt_allowance_refusal_leaves_nothing(website, user, engines, monkeypatch):
     idea = an_idea(website)
 

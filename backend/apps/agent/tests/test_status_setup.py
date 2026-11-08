@@ -178,3 +178,69 @@ def test_bad_query_values(user, django_user_model):
     assert resp.status_code == 404
     resp = client_for(user).get(f"{URL}?runs_needed=lots")
     assert resp.status_code == 400 and error(resp)["code"] == "invalid"
+
+
+def _runs_issue(body):
+    found = [i for i in body["setup"]["issues"] if i["subject"] == "prompt_runs"]
+    assert len(found) <= 1
+    return found[0] if found else None
+
+
+@override_settings(**READY)
+def test_runs_read_as_low_from_a_quarter_of_the_limit(user, website):
+    # 20 runs: five left (a quarter) is low, six is not.
+    use_runs(user, 14, website)
+    assert _runs_issue(_status(user)) is None
+    use_runs(user, 15, website)
+    low = _runs_issue(_status(user))
+    assert (low["code"], low["severity"], low["title"], low["action"]) == (
+        "prompt_runs_low", "info", "5 of your 20 free prompt runs are left this month.",
+        "Each prompt answered by one AI engine uses one run.")
+    use_runs(user, 19, website)
+    assert _runs_issue(_status(user))["title"] == (
+        "1 of your 20 free prompt runs are left this month.")
+
+
+@override_settings(**READY, FREE_MONTHLY_PROMPT_RUNS=3)
+def test_the_last_run_of_a_small_allowance_reads_as_low(user, website):
+    use_runs(user, 1, website)
+    assert _runs_issue(_status(user)) is None
+    use_runs(user, 2, website)
+    assert _runs_issue(_status(user))["code"] == "prompt_runs_low"
+
+
+@override_settings(**READY)
+def test_runs_needed_equal_to_the_runs_left_fit(user, website):
+    use_runs(user, 16, website)
+    assert _runs_issue(_status(user, "?runs_needed=4")) is None
+    assert _runs_issue(_status(user, "?runs_needed=5"))["code"] == "prompt_runs_low"
+    # Needing none is never low, even with few left.
+    assert _runs_issue(_status(user, "?runs_needed=0")) is None
+    # A negative number reads as none.
+    assert _runs_issue(_status(user, "?runs_needed=-4")) is None
+
+
+@override_settings(**READY)
+def test_used_up_runs_limit_but_do_not_block(user, website):
+    use_runs(user, 20, website)
+    body = _status(user, "?runs_needed=1")
+    issue = _runs_issue(body)
+    assert issue == {
+        "code": "prompt_runs_exhausted", "severity": "limited", "subject": "prompt_runs",
+        "engine": None, "setting": None,
+        "title": "You have used this month's 20 free prompt runs.",
+        "action": "AI engines aren't asked until they renew; Google results still work.",
+    }
+    # Google results still work, so the workspace is still ready.
+    assert body["setup"]["ready"] is True
+    assert body["research"]["available"] is True
+    assert "$" not in issue["title"] + issue["action"]
+
+
+@override_settings(**READY)
+def test_a_free_account_sees_no_dollar_amount_in_words(user):
+    body = _status(user)
+    words = " ".join(i["title"] + " " + i["action"] for i in body["setup"]["issues"])
+    words += " " + body["research"]["message"]
+    assert "$" not in words
+    assert body["allowance"]["show_usd"] is False

@@ -230,6 +230,23 @@ def test_the_scan_needs_a_run_per_prompt_and_engine(api, user, website, keys):
     assert body["scan_error"] is None and body["scan_audit_id"]
 
 
+def test_the_crawl_branch_needs_a_run_per_prompt_and_chosen_model(
+        api, user, website, keys, queued):
+    variants = [
+        {"id": "gpt4:gpt-4o", "provider": "gpt4", "configured": True},
+        {"id": "claude:sonnet", "provider": "claude", "configured": True},
+    ]
+    # Two prompts on two models need four runs; three are left.
+    use_runs(user, 17, website)
+    with patch("apps.llm_ranking.providers.list_model_variants", return_value=variants):
+        resp = _add(api, website, models=["gpt4:gpt-4o", "claude:sonnet"])
+    body = resp.json().get("data", resp.json())
+    assert body["scan_error"]["error"] == "insufficient_prompt_runs"
+    assert (body["scan_error"]["details"]["needed"],
+            body["scan_error"]["details"]["remaining"]) == (4, 3)
+    queued.assert_not_called()
+
+
 def test_the_crawl_branch_checks_its_runs(api, user, website, keys, queued):
     use_runs(user, 19, website)
     with patch("apps.llm_ranking.providers.list_model_variants", return_value=[
