@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { nextTick, reactive } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 // The pane store reads the agent store (project, messages) and the auth
@@ -213,5 +213,68 @@ describe('chatKeywords', () => {
       { keyword: 'best crm', brand: ['Acme'], competitors: ['Globex', 'Initech'] },
       { keyword: 'crm pricing', brand: [], competitors: [] },
     ])
+  })
+})
+
+describe('chatRanking', () => {
+  const stamped = (id, prompt, query, positions) => ({
+    capture_id: id,
+    query,
+    page: 1,
+    captured_at: '2026-11-04T10:00:00Z',
+    prompt_id: prompt,
+    brand_prompt_id: `b-${prompt}`,
+    results: [],
+    brand_positions: positions,
+  })
+
+  it('ranks the tracked prompts of the visible branch only', () => {
+    agentState.messages = {
+      m1: { id: 'm1', role: 'assistant', research: { serp: { s1: stamped('s1', 'P1', 'best crm', [7]) } } },
+      m2: { id: 'm2', role: 'assistant', research: { serp: { s2: stamped('s2', 'P2', 'other branch', [1]) } } },
+      m3: { id: 'm3', role: 'assistant', research: { serp: { s3: { capture_id: 's3', query: 'ad hoc', results: [] } } } },
+    }
+    agentState.visiblePath = () => ['m1', 'm3']
+    pane.bindChat('c1')
+    expect(pane.chatRanking.rows.map((r) => [r.keyword, r.position])).toEqual([['best crm', 7]])
+    expect(pane.chatRanking.byPromptId.P1.googleText).toBe('#7')
+    // The ad-hoc search is still offered for highlighting.
+    expect(pane.chatKeywords.map((k) => k.keyword)).toEqual(['best crm', 'ad hoc'])
+  })
+
+  it('never counts an open Google tab, which can hold another branch’s page', () => {
+    agentState.messages = {
+      m1: { id: 'm1', role: 'assistant', research: { serp: { s1: stamped('s1', 'P1', 'best crm', [3]) } } },
+    }
+    agentState.visiblePath = () => ['m1']
+    pane.bindChat('c1')
+    // A newer page of the same prompt from another branch, still open.
+    pane.openSerp({ ...stamped('s9', 'P1', 'best crm', []), captured_at: '2026-11-05T10:00:00Z' })
+    pane.openSerp(stamped('s8', 'P8', 'crm pricing', [1]))
+    expect(pane.chatRanking.rows.map((r) => [r.promptId, r.position])).toEqual([['P1', 3]])
+  })
+
+  it('takes a streaming run’s captures from its message, and keeps the ranking while only text streams', () => {
+    const research = { serp: { s1: stamped('s1', 'P1', 'best crm', [4]) } }
+    agentState.messages = reactive({ m1: { id: 'm1', role: 'assistant', content: 'a', research } })
+    agentState.visiblePath = () => ['m1']
+    pane.bindChat('c1')
+    const first = pane.chatRanking
+    expect(first.rows.map((r) => r.promptId)).toEqual(['P1'])
+    // A text delta replaces the message and keeps its research.
+    agentState.messages.m1 = { ...agentState.messages.m1, content: 'ab' }
+    expect(pane.chatRanking).toBe(first)
+    // research.recorded replaces the research with a new capture in it.
+    agentState.messages.m1 = {
+      ...agentState.messages.m1,
+      research: { serp: { ...agentState.messages.m1.research.serp, s2: stamped('s2', 'P2', 'crm pricing', [2]) } },
+    }
+    expect(pane.chatRanking).not.toBe(first)
+    expect(pane.chatRanking.rows.map((r) => r.promptId)).toEqual(['P2', 'P1'])
+  })
+
+  it('is empty for a new chat', () => {
+    pane.bindChat('new')
+    expect(pane.chatRanking.rows).toEqual([])
   })
 })

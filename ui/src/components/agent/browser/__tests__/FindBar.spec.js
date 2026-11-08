@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
 const { agentState, authState } = vi.hoisted(() => ({
@@ -185,5 +185,100 @@ describe('FindBar', () => {
     wrapper.unmount()
     wrapper = null
     expect(pane.findOf(id).text).toBe('pricing')
+  })
+})
+
+describe('FindBar keyword picker', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+    agentState.messages = {
+      m1: {
+        id: 'm1',
+        role: 'assistant',
+        research: {
+          serp: {
+            a: {
+              capture_id: 'a',
+              query: 'best crm',
+              page: 1,
+              prompt_id: 'P1',
+              results: [{ position: 2, is_competitor: true, competitor_name: 'Globex' }],
+              brand_positions: [4],
+              brand: { name: 'Acme' },
+              ai_overview: { shown: true, content_captured: true, mentions_you: true, cites_you: false },
+            },
+            b: { capture_id: 'b', query: 'crm pricing', page: 1, results: [], brand_positions: [] },
+          },
+        },
+      },
+    }
+    agentState.visiblePath = () => ['m1']
+    pane.bindChat('c1')
+    id = pane.openUrl('https://example.com/')
+    pane.openFind(id)
+  })
+
+  afterEach(() => {
+    agentState.messages = {}
+    agentState.visiblePath = () => []
+  })
+
+  async function openMenu() {
+    await wrapper.find('button.ag-find-pick').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    return document.body.querySelector('.ag-portal.ag-menu')
+  }
+
+  it('lists the ranked searches first and the other searches after, without repeats', async () => {
+    mountBar()
+    const menu = await openMenu()
+    const text = menu.textContent
+    const rankedAt = text.indexOf('Searched in this chat · ranked by your Google position')
+    const othersAt = text.indexOf('Other searches in this chat')
+    expect(rankedAt).toBeGreaterThan(-1)
+    expect(othersAt).toBeGreaterThan(rankedAt)
+    const items = [...menu.querySelectorAll('[role="menuitemradio"]')]
+    expect(items.map((el) => el.querySelector('.ag-menu-text').textContent.trim())).toEqual(['best crm', 'crm pricing'])
+    expect(items[0].getAttribute('aria-label')).toBe('best crm, #4 on Google, AI Overview: Names you')
+    expect(items[0].textContent).toContain('#4')
+  })
+
+  it('highlights a ranked search with its brand and competitor names', async () => {
+    mountBar()
+    const menu = await openMenu()
+    menu.querySelector('[role="menuitemradio"]').click()
+    await flushPromises()
+    expect(pane.keywordHighlight).toMatchObject({ keyword: 'best crm', brand: ['Acme'], competitors: ['Globex'] })
+  })
+
+  it('highlights a ranked keyword with the names its other searches found too', async () => {
+    agentState.messages.m1.research.serp.d = {
+      capture_id: 'd',
+      query: 'best crm',
+      page: 2,
+      results: [{ position: 15, is_competitor: true, competitor_name: 'Zoho' }],
+      brand_positions: [],
+    }
+    mountBar()
+    const menu = await openMenu()
+    menu.querySelector('[role="menuitemradio"]').click()
+    await flushPromises()
+    expect(pane.keywordHighlight.competitors).toEqual(['Globex', 'Zoho'])
+  })
+
+  it('offers two tracked prompts of the same text once, the better ranked one', async () => {
+    agentState.messages.m1.research.serp.c = {
+      capture_id: 'c',
+      query: 'Best CRM',
+      page: 1,
+      prompt_id: 'P2',
+      results: [],
+      brand_positions: [9],
+    }
+    mountBar()
+    const menu = await openMenu()
+    const items = [...menu.querySelectorAll('[role="menuitemradio"]')]
+    expect(items.map((el) => el.querySelector('.ag-menu-text').textContent.trim())).toEqual(['best crm', 'crm pricing'])
+    expect(items[0].getAttribute('aria-label')).toBe('best crm, #4 on Google, AI Overview: Names you')
   })
 })
