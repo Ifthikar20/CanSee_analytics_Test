@@ -33,3 +33,11 @@ describe('help copy', () => {
     }
   })
 })
+
+describe('Agents page help', () => {
+  it('explains the setup strip, the research ceiling and the presets', () => {
+    expect(TIPS.agents.setup).toMatch(/never as not mentioning you/)
+    expect(TIPS.agents.ceiling).toMatch(/per Google results page, per AI engine asked and per competitor page read/)
+    expect(TIPS.agents.presets).toMatch(/before anything runs/)
+  })
+})
