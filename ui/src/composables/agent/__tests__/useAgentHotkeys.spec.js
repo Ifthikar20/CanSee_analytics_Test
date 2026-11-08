@@ -277,6 +277,64 @@ describe('useAgentHotkeys', () => {
     expect(fakeAgent.stop).toHaveBeenCalledWith('c9')
   })
 
+  it('leaves Escape to an open alert dialog, so a run keeps going', async () => {
+    const ctx = await setup('/projects/w1/agent/c/c9')
+    wrapper = ctx.wrapper
+    fakeAgent.busy = { c9: true }
+    const alert = document.createElement('div')
+    alert.setAttribute('role', 'alertdialog')
+    document.body.appendChild(alert)
+    expect(press({ key: 'Escape' }).defaultPrevented).toBe(false)
+    expect(fakeAgent.stop).not.toHaveBeenCalled()
+    alert.remove()
+    // Any element marked aria-modal counts as a modal dialog.
+    const modal = document.createElement('section')
+    modal.setAttribute('aria-modal', 'true')
+    document.body.appendChild(modal)
+    expect(press({ key: 'Escape' }).defaultPrevented).toBe(false)
+    expect(fakeAgent.stop).not.toHaveBeenCalled()
+  })
+
+  it('does not stop a run on Escape with a modifier held', async () => {
+    const ctx = await setup('/projects/w1/agent/c/c9')
+    wrapper = ctx.wrapper
+    fakeAgent.busy = { c9: true }
+    for (const mod of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey']) {
+      expect(press({ key: 'Escape', [mod]: true }).defaultPrevented).toBe(false)
+    }
+    expect(fakeAgent.stop).not.toHaveBeenCalled()
+    expect(matchShortcut({ key: 'Escape', shiftKey: true }, false)).toBeNull()
+    expect(matchShortcut({ key: 'Escape', altKey: true }, false)).toBeNull()
+  })
+
+  it('leaves Escape pressed inside a side panel or a marked area to it', async () => {
+    const ctx = await setup('/projects/w1/agent/c/c9')
+    wrapper = ctx.wrapper
+    fakeAgent.busy = { c9: true }
+    const aside = document.createElement('aside')
+    const button = document.createElement('button')
+    aside.appendChild(button)
+    const marked = document.createElement('div')
+    marked.setAttribute('data-ag-escape-ignore', '')
+    const inner = document.createElement('span')
+    marked.appendChild(inner)
+    document.body.append(aside, marked)
+    expect(press({ key: 'Escape' }, button).defaultPrevented).toBe(false)
+    expect(press({ key: 'Escape' }, inner).defaultPrevented).toBe(false)
+    expect(fakeAgent.stop).not.toHaveBeenCalled()
+    // Outside them it stops the run.
+    expect(press({ key: 'Escape' }).defaultPrevented).toBe(true)
+    expect(fakeAgent.stop).toHaveBeenCalledWith('c9')
+  })
+
+  it('does not stop a run from a page outside the chat', async () => {
+    const ctx = await setup('/projects/w1/agent/context')
+    wrapper = ctx.wrapper
+    fakeAgent.busy = { new: true, c9: true }
+    expect(press({ key: 'Escape' }).defaultPrevented).toBe(false)
+    expect(fakeAgent.stop).not.toHaveBeenCalled()
+  })
+
   it('closes the drawer on Escape when narrow', async () => {
     const ctx = await setup('/projects/w1/agent')
     wrapper = ctx.wrapper

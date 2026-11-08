@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { reactive } from 'vue'
 
@@ -91,5 +91,56 @@ describe('ComposerDock status banner', () => {
     fakeAgent.status = { ...fakeAgent.status, prompt_runs: { unlimited: true, limit: null, remaining: null } }
     await w.vm.$nextTick()
     expect(w.find('.ag-banner').exists()).toBe(false)
+  })
+})
+
+describe('ComposerDock: the agent process is down', () => {
+  const running = { enabled: true, configured: true, live_available: true, allowance: { exceeded: false, warning: false } }
+
+  it('says the agent is not running and what to do, with Check again, without blocking a send', async () => {
+    vi.stubEnv('DEV', false)
+    try {
+      fakeAgent.status = { ...running, live_available: false }
+      const w = mountDock()
+      expect(w.find('.ag-banner-title').text()).toBe("The AI agent isn't running right now.")
+      expect(w.text()).toContain('Try again in a minute. If it stays down, contact support.')
+      // Customers never see setting names.
+      expect(w.text()).not.toContain('ANTHROPIC_API_KEY')
+      expect(w.findComponent(Composer).props('blocked')).toBe(false)
+      await w.find('.ag-banner button').trigger('click')
+      expect(fakeAgent.loadStatus).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('shows the refusal of a send while status still says running, and refreshes the status', async () => {
+    fakeAgent.status = { ...running }
+    fakeAgent.send = vi.fn(async () => {
+      throw Object.assign(new Error("The AI agent isn't running right now."), { status: 503, code: 'agent_unavailable' })
+    })
+    const w = mountDock()
+    expect(w.find('.ag-banner').exists()).toBe(false)
+    w.findComponent(Composer).vm.$emit('submit', 'Hello')
+    await flushPromises()
+    expect(w.find('.ag-banner-title').text()).toBe("The AI agent isn't running right now.")
+    expect(fakeAgent.loadStatus).toHaveBeenCalledTimes(1)
+    expect(w.findComponent(Composer).props('blocked')).toBe(false)
+    // The text comes back for another try.
+    expect(w.findComponent(Composer).props('modelValue')).toBe('Hello')
+    // The refreshed status says the agent is back: the banner goes.
+    fakeAgent.status = { ...running }
+    await w.vm.$nextTick()
+    expect(w.find('.ag-banner').exists()).toBe(false)
+  })
+
+  it('shows the banner for an optimistic message the agent refused', async () => {
+    fakeAgent.status = { ...running }
+    const w = mountDock()
+    fakeAgent.chatState = { new: { leafId: 'tmp-1' } }
+    fakeAgent.messages = { 'tmp-1': { id: 'tmp-1', status: 'send_failed', error_code: 'agent_unavailable' } }
+    await w.vm.$nextTick()
+    await w.vm.$nextTick()
+    expect(w.find('.ag-banner-title').text()).toBe("The AI agent isn't running right now.")
   })
 })

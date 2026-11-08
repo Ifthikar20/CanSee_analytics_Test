@@ -40,6 +40,18 @@ describe('report exports', () => {
     expect(html).toContain('Research data')
   })
 
+  it.each([
+    ['a list', []],
+    ['a string', 'header'],
+    ['null', null],
+  ])('leaves a report whose header is %s unlabelled in both exports', (_, header) => {
+    const data = { ...oldReport(), template: 'competitor_comparison', header }
+    const html = documentHtml({ title: 'Report', markdown: MARKDOWN, data, report: true })
+    expect(new DOMParser().parseFromString(html, 'text/html').querySelector('main header')).toBeNull()
+    expect(html).not.toContain('Competitor comparison')
+    expect(documentMarkdown({ markdown: MARKDOWN, data, report: true })).toBe(MARKDOWN)
+  })
+
   it('never adds a header to a document export', () => {
     const html = documentHtml({ title: 'Doc', markdown: MARKDOWN, data: withTemplate(), report: false })
     expect(new DOMParser().parseFromString(html, 'text/html').querySelector('main header')).toBeNull()

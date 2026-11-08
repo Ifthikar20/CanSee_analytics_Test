@@ -343,6 +343,17 @@ describe('promptRunsLine', () => {
     expect(fallbackTemplates().filter(asksEngines).map((t) => t.id)).toEqual(['google_ai_gap', 'competitor_comparison'])
     expect(asksEngines(null)).toBe(false)
   })
+
+  it('needs both new checks and an engine requirement that asks', () => {
+    const t = (requirements) => normalizeTemplate({ id: 'google_ai_gap', requirements })
+    // A catalog that says the gap report runs no new checks today: no runs line.
+    const saved = t({ engines: 'optional', runs_checks: false })
+    expect(asksEngines(saved)).toBe(false)
+    expect(promptRunsLine(saved, { unlimited: false, remaining: 5 })).toBe('')
+    expect(asksEngines(t({ engines: 'required', runs_checks: true }))).toBe(true)
+    expect(asksEngines(t({ engines: 'saved', runs_checks: true }))).toBe(false)
+    expect(asksEngines(t({ engines: 'not_used', runs_checks: true }))).toBe(false)
+  })
 })
 
 describe('draftText', () => {

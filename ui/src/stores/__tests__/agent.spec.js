@@ -1656,3 +1656,221 @@ describe('agent store: deletes and resets', () => {
         expect(getLastProject('7')).toBeNull()
     })
 })
+
+describe('agent store: hardening of send, retry, settle and the queue', () => {
+    it('a retry while the first POST is still pending sends nothing more', async () => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(ok(chatDetail()))
+        agentApi.sendMessage.mockImplementationOnce(() => new Promise(() => {}))
+        await store.send({ chatId: CHAT_ID, text: 'Hello' })
+        const [pending] = store.visiblePath(CHAT_ID)
+        expect(pending.status).toBe('sending')
+        await expect(store.retrySend(pending.id)).resolves.toBeNull()
+        expect(agentApi.sendMessage).toHaveBeenCalledTimes(1)
+    })
+
+    it('a retry of an unknown or already sent message sends nothing', async () => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(
+            ok(chatDetail({ current_leaf_id: ASSISTANT_ID, messages: [userMessage(), emptyAssistant({ status: 'complete' })] }))
+        )
+        await store.openChat(CHAT_ID)
+        await expect(store.retrySend('tmp-missing')).resolves.toBeNull()
+        await expect(store.retrySend(USER_MESSAGE_ID)).resolves.toBeNull()
+        expect(agentApi.sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('leaves a reply this tab still streams alone when a reload of the chat does not list its run yet', async () => {
+        await initProject()
+        await openRunningChat()
+        expect(rm.manager.isAttached(RUN_ID)).toBe(true)
+        // A chat detail read before the server recorded the run as active.
+        agentApi.getChat.mockResolvedValueOnce(
+            ok(chatDetail({ current_leaf_id: ASSISTANT_ID, messages: [userMessage(), emptyAssistant({ status: 'streaming', parts_seq: 10 })] }))
+        )
+        await store.openChat(CHAT_ID, { force: true })
+        expect(store.messages[ASSISTANT_ID].status).toBe('streaming')
+        expect(store.isChatBusy(CHAT_ID)).toBe(true)
+    })
+
+    it('a queued run the server finished loses its place in line', async () => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(ok(chatDetail()))
+        await store.openChat(CHAT_ID)
+        agentApi.sendMessage.mockResolvedValueOnce(
+            accepted({
+                run: { id: RUN_ID, chat_id: CHAT_ID, message_id: ASSISTANT_ID, status: 'queued', last_seq: 0, queue: { position: 2, ahead: 1, slots: 4 } },
+            })
+        )
+        await store.send({ chatId: CHAT_ID, text: 'Research Turonote' })
+        await flush()
+        expect(store.runs[RUN_ID].queue).toEqual({ position: 2, ahead: 1, slots: 4 })
+        agentApi.getChat.mockResolvedValueOnce(
+            ok(chatDetail({ current_leaf_id: ASSISTANT_ID, messages: [userMessage(), emptyAssistant({ status: 'interrupted' })] }))
+        )
+        const result = await rm.hooks.onResync(RUN_ID, 'agent_unavailable')
+        expect(result.active).toBe(false)
+        expect(store.runs[RUN_ID].phase).not.toBe('queued')
+        expect(store.runs[RUN_ID].queue).toBeNull()
+    })
+
+    it.each([
+        ['the agent process is down', 503, 'agent_unavailable'],
+        ['the allowance is used up', 402, 'allowance_exceeded'],
+    ])('refreshes the status banner when a send is refused because %s', async (_, status, code) => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(ok(chatDetail()))
+        agentApi.status.mockClear()
+        agentApi.status.mockResolvedValue(ok({ enabled: true, live_available: code !== 'agent_unavailable', configured: true }))
+        agentApi.sendMessage.mockRejectedValueOnce(axiosError(status, { code, message: 'Refused.' }))
+        await store.send({ chatId: CHAT_ID, text: 'Hello' })
+        await flush()
+        expect(agentApi.status).toHaveBeenCalledTimes(1)
+        const [failed] = store.visiblePath(CHAT_ID)
+        expect(failed.status).toBe('send_failed')
+        expect(failed.error_code).toBe(code)
+    })
+
+    it('does not refresh the status for a send refused for another reason', async () => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(ok(chatDetail()))
+        agentApi.status.mockClear()
+        agentApi.sendMessage.mockRejectedValueOnce(axiosError(429, { code: 'agent_busy', message: 'Busy.' }))
+        await store.send({ chatId: CHAT_ID, text: 'Hello' })
+        await flush()
+        expect(agentApi.status).not.toHaveBeenCalled()
+    })
+
+    it('a new message replaces a failed send instead of stacking under it', async () => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(
+            ok(chatDetail({ current_leaf_id: ASSISTANT_ID, messages: [userMessage(), emptyAssistant({ status: 'complete' })] }))
+        )
+        await store.openChat(CHAT_ID)
+        agentApi.sendMessage.mockRejectedValueOnce(axiosError(502, {}))
+        await store.send({ chatId: CHAT_ID, text: 'Lost question' })
+        await flush()
+        const failed = store.visiblePath(CHAT_ID).at(-1)
+        expect(failed.status).toBe('send_failed')
+
+        agentApi.sendMessage.mockImplementationOnce(() => new Promise(() => {}))
+        await store.send({ chatId: CHAT_ID, text: 'New question' })
+        expect(store.messages[failed.id]).toBeUndefined()
+        const path = store.visiblePath(CHAT_ID)
+        expect(path.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
+        expect(path.at(-1).parts[0].text).toBe('New question')
+        expect(agentApi.sendMessage.mock.calls[1][2].parent_id).toBe(ASSISTANT_ID)
+    })
+
+    it('a 409 that is not run_in_progress does not reload the chat', async () => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(ok(chatDetail()))
+        await store.openChat(CHAT_ID)
+        agentApi.sendMessage.mockRejectedValueOnce(axiosError(409, { code: 'conflict', message: 'Conflict.' }))
+        await store.send({ chatId: CHAT_ID, text: 'Hello' })
+        await flush()
+        expect(agentApi.getChat).toHaveBeenCalledTimes(1)
+        expect(store.visiblePath(CHAT_ID)[0].status).toBe('send_failed')
+    })
+
+    it('a send answer that arrives after a project switch is dropped', async () => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(ok(chatDetail()))
+        let resolveSend
+        agentApi.sendMessage.mockImplementationOnce(() => new Promise((resolve) => (resolveSend = resolve)))
+        await store.send({ chatId: CHAT_ID, text: 'Hello' })
+        await store.init(6)
+        resolveSend(accepted())
+        await flush()
+        expect(store.messages[USER_MESSAGE_ID]).toBeUndefined()
+        expect(store.messages[ASSISTANT_ID]).toBeUndefined()
+        expect(store.runs[RUN_ID]).toBeUndefined()
+        expect(rm.attached).toEqual([])
+    })
+
+    it('a resync that finds another run active ends the run it was asked about from its saved message', async () => {
+        await initProject()
+        await openRunningChat()
+        agentApi.getChat.mockResolvedValueOnce(
+            ok(
+                chatDetail({
+                    current_leaf_id: 'a2',
+                    messages: [
+                        userMessage(),
+                        emptyAssistant({ status: 'complete', parts_seq: 30 }),
+                        userMessage({ id: 'u2', parent_id: ASSISTANT_ID, sibling_ids: ['u2'] }),
+                        emptyAssistant({ id: 'a2', parent_id: 'u2', sibling_ids: ['a2'], parts_seq: 0 }),
+                    ],
+                    active_run: { id: 'run-2', status: 'running', message_id: 'a2', last_seq: 0 },
+                })
+            )
+        )
+        const result = await rm.hooks.onResync(RUN_ID, 'restart')
+        expect(result.active).toBe(false)
+        expect(store.runs[RUN_ID].phase).toBe('done')
+        expect(store.runs['run-2'].phase).toBe('running')
+    })
+
+    it('a resync that finds a queued run already running there stops saying it waits for a slot', async () => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(ok(chatDetail()))
+        await store.openChat(CHAT_ID)
+        agentApi.sendMessage.mockResolvedValueOnce(
+            accepted({
+                run: { id: RUN_ID, chat_id: CHAT_ID, message_id: ASSISTANT_ID, status: 'queued', last_seq: 0, queue: { position: 2, ahead: 1, slots: 4 } },
+            })
+        )
+        await store.send({ chatId: CHAT_ID, text: 'Research Turonote' })
+        await flush()
+        expect(store.runs[RUN_ID].phase).toBe('queued')
+        // The stream lost its buffer; the snapshot is past run.started, so
+        // the replay from its parts_seq never carries run.started again.
+        agentApi.getChat.mockResolvedValueOnce(
+            ok(
+                chatDetail({
+                    current_leaf_id: ASSISTANT_ID,
+                    messages: [
+                        userMessage(),
+                        emptyAssistant({ status: 'streaming', parts: [{ id: 'p-text', type: 'text', request: 1, text: 'Checkpointed' }], parts_seq: 12 }),
+                    ],
+                    active_run: { id: RUN_ID, status: 'running', message_id: ASSISTANT_ID, last_seq: 14, queue: null },
+                })
+            )
+        )
+        const result = await rm.hooks.onResync(RUN_ID, 'buffer_expired')
+        expect(result).toEqual({ active: true, lastSeq: 12 })
+        expect(store.runs[RUN_ID].phase).toBe('running')
+        expect(store.runs[RUN_ID].queue).toBeNull()
+        expect(store.isChatBusy(CHAT_ID)).toBe(true)
+        // Later events of the run are folded in as usual.
+        const e = eventFactory({ start: 12 })
+        rm.hooks.applyEvents(RUN_ID, [e('part.delta', { part_id: 'p-text', field: 'text', append: ' more' })])
+        expect(store.messages[ASSISTANT_ID].parts[0].text).toBe('Checkpointed more')
+        expect(store.runs[RUN_ID].phase).toBe('running')
+    })
+
+    it('a stopped queued run keeps Stopping when a reload says it runs', async () => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(ok(chatDetail()))
+        await store.openChat(CHAT_ID)
+        agentApi.sendMessage.mockResolvedValueOnce(accepted())
+        await store.send({ chatId: CHAT_ID, text: 'Research Turonote' })
+        await flush()
+        agentApi.cancelRun.mockImplementationOnce(() => new Promise(() => {}))
+        store.stop(CHAT_ID)
+        await flush()
+        const phase = store.runs[RUN_ID].phase
+        expect(phase).toBe('cancelling')
+        agentApi.getChat.mockResolvedValueOnce(
+            ok(
+                chatDetail({
+                    current_leaf_id: ASSISTANT_ID,
+                    messages: [userMessage(), emptyAssistant({ status: 'streaming', parts_seq: 3 })],
+                    active_run: { id: RUN_ID, status: 'running', message_id: ASSISTANT_ID, last_seq: 3 },
+                })
+            )
+        )
+        await rm.hooks.onResync(RUN_ID, 'buffer_expired')
+        expect(store.runs[RUN_ID].phase).toBe('cancelling')
+    })
+})
