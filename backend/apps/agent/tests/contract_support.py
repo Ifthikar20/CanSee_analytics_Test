@@ -19,6 +19,7 @@ DID = "d4c3b2a1-0f9e-4d8c-8b7a-695847362514"
 ROUTES = [
     ("agent-status", {}, "status/", {"GET"}),
     ("agent-catalog", {}, "agents/", {"GET"}),
+    ("agent-report-templates", {}, "report-templates/", {"GET"}),
     ("agent-chats", {"website_id": WID}, f"websites/{WID}/chats/", {"GET", "POST"}),
     ("agent-chat-detail", {"website_id": WID, "chat_id": CID},
      f"websites/{WID}/chats/{CID}/", {"GET", "PATCH", "DELETE"}),
@@ -176,7 +177,10 @@ ARTIFACT_REVIEW = {"state", "effective_state", "version", "reviewer_name", "upda
 ARTIFACT_DETAIL = ARTIFACT_SUMMARY | {"content", "content_type", "data", "version", "warnings",
                                       "summary"}
 ARTIFACT_VERSION_SUMMARY = {"version", "created_at", "summary", "source", "size_bytes"}
-REPORT_DATA = {"serp", "pages", "engines", "gaps", "swarm"}
+REPORT_DATA = {"serp", "pages", "engines", "gaps", "swarm", "template", "header"}
+# data.header of a report (report templates).
+REPORT_HEADER = {"template", "project", "captured_at", "data", "engines", "locations",
+                 "prompts", "competitors", "compared"}
 # design/p2_contract.md 11b.
 CONTEXT_OVERVIEW = {"sections", "entries", "documents", "facts", "competitors", "totals",
                     "build", "can_edit"}
