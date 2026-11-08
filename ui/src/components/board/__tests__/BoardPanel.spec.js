@@ -6,7 +6,13 @@ import { RouterView, createRouter, createWebHistory } from 'vue-router'
 
 const api = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), reset: vi.fn() }))
 vi.mock('@/api/board', () => ({ default: api }))
-const sources = vi.hoisted(() => ({ invalidate: vi.fn(), revalidate: vi.fn() }))
+// useBoardSource: the board page reads the ranking source for Setup's next
+// steps (whether Autopilot runs); unknown here.
+const sources = vi.hoisted(() => ({
+  invalidate: vi.fn(),
+  revalidate: vi.fn(),
+  useBoardSource: vi.fn(() => ({ data: { value: null }, loading: { value: false }, failure: { value: null } })),
+}))
 vi.mock('@/composables/board/useBoardSource', () => sources)
 
 // Cards and expanded views are stand-ins; a view says what it was given and

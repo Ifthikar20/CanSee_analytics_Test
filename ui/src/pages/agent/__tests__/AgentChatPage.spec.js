@@ -149,6 +149,24 @@ describe('AgentChatPage first research', () => {
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
   })
 
+  it("tells the analytics board's Setup which chat the research runs in", async () => {
+    localStorage.setItem('cs-setup-v1:7:w1', JSON.stringify({ mode: 'research', createdAt: 1234, dismissed: false, collapsed: false }))
+    useFirstResearch().stash({ websiteId: 'w1', text: TEXT })
+    await setup('/projects/w1/agent?start=first-research')
+    expect(JSON.parse(localStorage.getItem('cs-setup-v1:7:w1'))).toMatchObject({ mode: 'research', chatId: 'c9', createdAt: 1234 })
+  })
+
+  it('tells Setup nothing when the research could not be sent', async () => {
+    resetStores({
+      send: vi.fn(async () => {
+        throw Object.assign(new Error('x'), { name: 'AgentError', status: 503, code: 'agent_unavailable', message: 'Down.' })
+      }),
+    })
+    useFirstResearch().stash({ websiteId: 'w1', text: TEXT })
+    await setup('/projects/w1/agent?start=first-research')
+    expect(localStorage.getItem('cs-setup-v1:7:w1')).toBeNull()
+  })
+
   it('waits until the agent store is on the project', async () => {
     resetStores({ websiteId: null, init: vi.fn() })
     useFirstResearch().stash({ websiteId: 'w1', text: TEXT })

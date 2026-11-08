@@ -6,7 +6,13 @@ import { RouterView, createMemoryHistory, createRouter, useRoute } from 'vue-rou
 
 const api = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), reset: vi.fn() }))
 vi.mock('@/api/board', () => ({ default: api }))
-const sources = vi.hoisted(() => ({ invalidate: vi.fn(), revalidate: vi.fn() }))
+// useBoardSource: the board page reads the ranking source for Setup's next
+// steps (whether Autopilot runs); unknown here.
+const sources = vi.hoisted(() => ({
+  invalidate: vi.fn(),
+  revalidate: vi.fn(),
+  useBoardSource: vi.fn(() => ({ data: { value: null }, loading: { value: false }, failure: { value: null } })),
+}))
 vi.mock('@/composables/board/useBoardSource', () => sources)
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => toast }))
@@ -14,9 +20,11 @@ vi.mock('@/composables/useToast', () => ({ useToast: () => toast }))
 const loaded = vi.hoisted(() => [])
 vi.mock('@/components/board/widgetComponents', async () => {
   const vue = await import('vue')
+  // A card with nothing to show yet: its state carries the setup pointer.
+  const { default: SetupPointer } = await import('@/components/board/SetupPointer.vue')
   const Card = vue.defineComponent({
     props: { websiteId: String, size: String },
-    setup: (props) => () => vue.h('p', { class: 'stub-card' }, props.websiteId),
+    setup: (props) => () => vue.h('div', [vue.h('p', { class: 'stub-card' }, props.websiteId), vue.h(SetupPointer)]),
   })
   const View = vue.defineComponent({
     props: { websiteId: String },
@@ -86,6 +94,10 @@ async function setup(path = '/projects/w1/analytics') {
       { path: '/projects/:websiteId/analytics', name: 'analytics', component: AnalyticsBoardPage, props: true, meta: { section: 'analytics' } },
       // Another page in main.
       { path: '/elsewhere', component: { render: () => h('p', 'Elsewhere') } },
+      // Where Setup's next steps lead.
+      { path: '/projects/:websiteId/agent', name: 'agent-home', component: { render: () => null } },
+      { path: '/projects/:websiteId/agent/c/:chatId', name: 'agent-chat', component: { render: () => null } },
+      { path: '/settings/autopilot', name: 'settings-autopilot', component: { render: () => null } },
     ],
   })
   await router.push(path)
@@ -453,5 +465,78 @@ describe('AnalyticsBoardPage', () => {
     await flushPromises()
     expect(cells(wrapper)).toEqual(['pages'])
     expect(wrapper.find('.bd-save-head').text()).toBe('')
+  })
+  describe('Setup', () => {
+    const firstLanding = (wid = 'w1', over = {}) =>
+      localStorage.setItem(
+        `cs-setup-v1:7:${wid}`,
+        JSON.stringify({ mode: 'skip', chatId: null, createdAt: Date.now(), dismissed: false, collapsed: false, ...over }),
+      )
+
+    it('stays off a board with nothing to set up, and empty cards say nothing more', async () => {
+      api.get.mockResolvedValue(payload())
+      const { wrapper } = await setup()
+      await settle()
+      expect(wrapper.find('[data-setup-panel]').exists()).toBe(false)
+      expect(wrapper.find('.bd-setup-pointer').exists()).toBe(false)
+    })
+
+    it('opens the board on a first landing, above the cards, and empty cards point to it', async () => {
+      firstLanding()
+      api.get.mockResolvedValue(payload())
+      const { wrapper } = await setup()
+      await settle()
+      const body = wrapper.find('.bd-body')
+      expect(body.element.firstElementChild.matches('[data-setup-panel]')).toBe(true)
+      const panel = wrapper.find('[data-setup-panel]')
+      expect(panel.find('h2').text()).toBe('Setup')
+      // Outside the sticky toolbar: it scrolls with the board.
+      expect(wrapper.find('.bd-top [data-setup-panel]').exists()).toBe(false)
+
+      const pointers = wrapper.findAll('.bd-cell .bd-setup-pointer')
+      expect(pointers).toHaveLength(2)
+      expect(pointers[0].text()).toContain('See Setup at the top of this page for what to do next.')
+
+      // Show setup from a card unfolds the panel and takes focus there.
+      await wrapper.findAll('button').find((b) => b.text() === 'Hide details').trigger('click')
+      expect(panel.find('.ss-body').isVisible()).toBe(false)
+      await pointers[1].find('button').trigger('click')
+      await flushPromises()
+      expect(panel.find('.ss-body').isVisible()).toBe(true)
+      expect(document.activeElement).toBe(panel.find('h2').element)
+    })
+
+    it("opens Add prompts in the side panel from Setup's next steps", async () => {
+      firstLanding()
+      api.get.mockResolvedValue(payload())
+      const { wrapper, router } = await setup()
+      await settle()
+      await wrapper.find('[data-step="prompts"] button').trigger('click')
+      await settle()
+      expect(router.currentRoute.value.query).toEqual({ widget: 'prompts', add: '1' })
+    })
+
+    it("shows each project's own Setup on a project change", async () => {
+      firstLanding('w1')
+      api.get.mockResolvedValue(payload())
+      const { wrapper, router } = await setup()
+      await settle()
+      expect(wrapper.find('[data-setup-panel]').exists()).toBe(true)
+      await router.push('/projects/w2/analytics')
+      await settle()
+      expect(wrapper.find('[data-setup-panel]').exists()).toBe(false)
+      expect(wrapper.find('.bd-setup-pointer').exists()).toBe(false)
+      await router.push('/projects/w1/analytics')
+      await settle()
+      expect(wrapper.find('[data-setup-panel]').exists()).toBe(true)
+    })
+
+    it('stays closed on a project where it was closed', async () => {
+      firstLanding('w1', { dismissed: true })
+      api.get.mockResolvedValue(payload())
+      const { wrapper } = await setup()
+      await settle()
+      expect(wrapper.find('[data-setup-panel]').exists()).toBe(false)
+    })
   })
 })
