@@ -348,7 +348,7 @@ describe('source words', () => {
 })
 
 describe('notes when Google or Claude could not help', () => {
-  const scan = (over = {}) => ({ competitors: 3, topics: 5, missing_keys: [], topics_source: 'both', google: { configured: true, label: 'SerpAPI', error: '' }, ...over })
+  const scan = (over = {}) => ({ competitors: 3, topics: 5, missing_keys: [], topics_source: 'both', competitors_source: 'both', google: { configured: true, label: 'SerpAPI', error: '' }, ...over })
 
   it('says nothing when both worked, or when an older scan did not say', () => {
     expect(competitorNote(scan())).toBeNull()
@@ -358,15 +358,58 @@ describe('notes when Google or Claude could not help', () => {
   })
 
   it.each([
-    ['Google is not set up', { google: { configured: false, label: '', error: 'serpapi_not_configured' } }, "Google search isn't set up on this workspace, so these are AI suggestions, not Google results.", ['google']],
-    ['Google says not configured while configured is true', { google: { configured: true, label: '', error: 'serpapi_not_configured' } }, "Google search isn't set up on this workspace, so these are AI suggestions, not Google results.", ['google']],
-    ['the daily limit is reached', { google: { configured: true, label: 'SerpAPI', error: 'daily_limit' } }, "Google search reached today's limit for setup scans, so these are AI suggestions, not Google results.", []],
-    ['Google answered for another name', { google: { configured: true, error: 'no_brand_results' } }, 'Google showed results for a different name, so these are AI suggestions, not Google results.', []],
-    ['Google timed out', { google: { configured: true, error: 'timeout' } }, "Google search didn't answer this time, so these are AI suggestions, not Google results.", []],
-    ['Google returned an HTTP error', { google: { configured: true, error: 'http_502' } }, "Google search didn't answer this time, so these are AI suggestions, not Google results.", []],
-    ['Claude is not set up', { missing_keys: ['ANTHROPIC_API_KEY'] }, "The AI service isn't set up on this workspace, so these come straight from Google results, without an AI check.", ['ANTHROPIC_API_KEY']],
+    ['Google is not set up', { competitors_source: 'ai', google: { configured: false, label: '', error: 'serpapi_not_configured' } }, "Google search isn't set up on this workspace, so these are AI suggestions, not Google results.", ['google']],
+    ['Google says not configured while configured is true', { competitors_source: 'ai', google: { configured: true, label: '', error: 'serpapi_not_configured' } }, "Google search isn't set up on this workspace, so these are AI suggestions, not Google results.", ['google']],
+    ['the daily limit is reached', { competitors_source: 'ai', google: { configured: true, label: 'SerpAPI', error: 'daily_limit' } }, "Google search reached today's limit for setup scans, so these are AI suggestions, not Google results.", []],
+    ['Google answered for another name', { competitors_source: 'ai', google: { configured: true, error: 'no_brand_results' } }, 'Google showed results for a different name, so these are AI suggestions, not Google results.', []],
+    ['Google timed out', { competitors_source: 'ai', google: { configured: true, error: 'timeout' } }, "Google search didn't answer this time, so these are AI suggestions, not Google results.", []],
+    ['Google returned an HTTP error', { competitors_source: 'ai', google: { configured: true, error: 'http_502' } }, "Google search didn't answer this time, so these are AI suggestions, not Google results.", []],
+    ['Claude is not set up', { missing_keys: ['ANTHROPIC_API_KEY'], competitors_source: 'search' }, "The AI service isn't set up on this workspace, so these come straight from Google results, without an AI check.", ['ANTHROPIC_API_KEY']],
   ])('step 3 says so when %s', (_, over, text, settings) => {
     expect(competitorNote(scan(over))).toEqual({ text, settings })
+  })
+
+  describe('step 3 when Google brand searches failed but the list has rows', () => {
+    // The server's older Google Custom Search fallback: rows with source
+    // "search" and no evidence, while SerpAPI is missing or failed.
+    const LEGACY = { competitors_source: 'search', google: { configured: false, error: 'serpapi_not_configured' } }
+
+    it('says the rows come from Google results, not AI suggestions, when the AI service is set up', () => {
+      expect(competitorNote(scan(LEGACY))).toEqual({
+        text: 'These come straight from Google results, without an AI check.',
+        settings: ['google'],
+      })
+    })
+
+    it('says the AI service is not set up and the rows come from Google when the Claude key is missing', () => {
+      const note = competitorNote(scan({ ...LEGACY, missing_keys: ['ANTHROPIC_API_KEY'] }))
+      expect(note).toEqual({
+        text: "The AI service isn't set up on this workspace, so these come straight from Google results, without an AI check.",
+        settings: ['google', 'ANTHROPIC_API_KEY'],
+      })
+      expect(note.text).not.toContain('AI suggestions')
+    })
+
+    it.each(['daily_limit', 'timeout'])('says the same after the Google error %s', (error) => {
+      expect(competitorNote(scan({ competitors_source: 'search', google: { configured: true, error } }))).toEqual({
+        text: 'These come straight from Google results, without an AI check.',
+        settings: [],
+      })
+    })
+
+    it('never calls the rows AI suggestions while the Claude key is missing, even if the source says ai', () => {
+      const note = competitorNote(scan({ competitors_source: 'ai', missing_keys: ['ANTHROPIC_API_KEY'], google: { configured: false } }))
+      expect(note.text).not.toContain('AI suggestions')
+      expect(note.text).toBe("Google search isn't set up on this workspace, and the AI service isn't set up.")
+    })
+
+    it.each([
+      ['an older scan with no source', ''],
+      ['a mixed list', 'both'],
+    ])('makes no claim about the rows for %s', (_, competitors_source) => {
+      const note = competitorNote(scan({ competitors_source, google: { configured: false } }))
+      expect(note).toEqual({ text: "Google search isn't set up on this workspace.", settings: ['google'] })
+    })
   })
 
   it.each([
@@ -419,6 +462,28 @@ describe('step 3: competitors', () => {
     expect(note.attributes('role')).toBe('note')
     expect(note.text()).toBe("Google search isn't set up on this workspace, so these are AI suggestions, not Google results.")
     expect(wrapper.text()).not.toContain('SERPAPI_KEY')
+  })
+
+  it('says legacy Google rows come from Google, matching each row, when Google search and Claude are missing', async () => {
+    vi.stubEnv('DEV', false)
+    const { wrapper } = await atStep(2, {
+      child: CompetitorsStep,
+      scan: {
+        google: { ...GOOGLE_OK, configured: false, error: 'serpapi_not_configured' },
+        missing_keys: ['ANTHROPIC_API_KEY'],
+        competitors_source: 'search',
+        competitors: [
+          { name: 'Confluence', domain: 'atlassian.com', source: 'search', evidence: null },
+          { name: 'Coda', domain: 'coda.io', source: 'search', evidence: null },
+        ],
+      },
+    })
+    expect(wrapper.find('.ob-source-note').text()).toBe(
+      "The AI service isn't set up on this workspace, so these come straight from Google results, without an AI check.",
+    )
+    expect(wrapper.findAll('.ob-competitor-source').map((r) => r.text())).toEqual(['Found on Google', 'Found on Google'])
+    expect(wrapper.text()).not.toContain('AI suggestions')
+    expect(wrapper.text()).not.toContain('ANTHROPIC_API_KEY')
   })
 
   it('also names the settings for staff', async () => {
