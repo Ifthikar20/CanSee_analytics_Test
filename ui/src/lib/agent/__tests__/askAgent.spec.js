@@ -19,6 +19,7 @@ async function makeRouter(path = '/projects/w1/pages') {
     history: createMemoryHistory(),
     routes: [
       { path: '/projects/:websiteId/pages', name: 'site-pages', component: Blank },
+      { path: '/projects/:websiteId/agent/reports', name: 'agent-reports', component: Blank },
       { path: '/projects/:websiteId/agent', name: 'agent-home', component: Blank },
     ],
   })
@@ -92,7 +93,7 @@ describe('askAgent', () => {
     expect(localStorage.getItem(draftKey)).toBeNull()
   })
 
-  it("labels every board widget by its title, the Agents page and the old Citations tab's key", () => {
+  it("labels every board widget by its title, the Agents and Reports pages and the old Citations tab's key", () => {
     expect(ASK_FROM_LABELS).toMatchObject({
       'prompt-box': 'Ask AI',
       ranking: 'Prompt ranking',
@@ -109,10 +110,11 @@ describe('askAgent', () => {
       'ai-crawlers': 'AI crawlers',
       products: 'Products',
       agents: 'Agents',
+      reports: 'Reports',
       sources: 'Citations',
     })
-    // 21 widgets, the Agents page and the legacy key; the Overview is gone.
-    expect(Object.keys(ASK_FROM_LABELS)).toHaveLength(23)
+    // 21 widgets, the Agents and Reports pages and the legacy key; the Overview is gone.
+    expect(Object.keys(ASK_FROM_LABELS)).toHaveLength(24)
     expect(ASK_FROM_LABELS.overview).toBeUndefined()
   })
 
@@ -124,5 +126,20 @@ describe('askAgent', () => {
     await askAgent(router, { websiteId: 'w1', from: 'prompt-box', text: 'how is my visibility doing' })
     expect(router.currentRoute.value.query).toEqual({ from: 'prompt-box' })
     expect(localStorage.getItem(draftKey)).toBe('how is my visibility doing')
+  })
+
+  it('carries a report template key from the Reports gallery', async () => {
+    const router = await makeRouter('/projects/w1/agent/reports')
+    await askAgent(router, { websiteId: 'w1', agent: 'gap_analyst', from: 'reports', template: 'prompt_deep_dive', text: 'Write it' })
+    expect(router.currentRoute.value.query).toEqual({ agent: 'gap_analyst', from: 'reports', template: 'prompt_deep_dive' })
+    expect(router.currentRoute.value.fullPath).not.toContain('Write it')
+  })
+
+  it('drops an unknown or malformed template key', async () => {
+    const router = await makeRouter()
+    for (const template of ['weekly', '', null, 42, ['change_log'], 'CHANGE_LOG']) {
+      await askAgent(router, { websiteId: 'w1', from: 'reports', template, text: 'Hi' })
+      expect(router.currentRoute.value.query).toEqual({ from: 'reports' })
+    }
   })
 })
