@@ -116,7 +116,7 @@ def test_stop(api, website, engines, settings):
     assert stopped["progress"] == {"total": 3, "done": 0, "failed": 0, "running": 0}
 
 
-def test_viewers_read_members_ask_strangers_get_404(website, member_clients, engines, extraction):
+def test_viewers_read_members_ask_strangers_get_404_viewer_writes_403(website, member_clients, engines, extraction):
     engines.enable("chatgpt")
     member, viewer, stranger = (member_clients[k] for k in ("member", "viewer", "stranger"))
     resp = _ask(member, website)
@@ -127,7 +127,7 @@ def test_viewers_read_members_ask_strangers_get_404(website, member_clients, eng
     assert viewer.get(urls["runs"]).status_code == 200
     assert viewer.get(urls["run"]).status_code == 200
     for url in (urls["estimate"], urls["runs"], urls["cancel"]):
-        assert viewer.post(url, {**body(), "confirm": {}}, format="json").status_code == 404
+        assert viewer.post(url, {**body(), "confirm": {}}, format="json").status_code == 403
     for method, url in (("get", urls["runs"]), ("get", urls["run"]),
                         ("post", urls["estimate"]), ("post", urls["cancel"])):
         assert getattr(stranger, method)(url, body(), format="json").status_code == 404
