@@ -101,6 +101,8 @@ class TestBothConfigsStayInSync:
             # a plain /admin/ falls through to the SPA. There is no /ws/:
             # websockets were removed from the app.
             "/ops-ed4aaf863d969e541d/",
+            # The prerendered blog pages (dist/blog/<slug>/index.html).
+            "^~ /blog",
         ],
     )
     def test_every_route_exists_in_both(self, location):
@@ -119,3 +121,61 @@ class TestBothConfigsStayInSync:
         # The :- form treats an empty value as unset, so a blank NGINX_CONF in
         # docker/.env still resolves rather than producing a directory mount.
         assert "${NGINX_CONF:-nginx.prod.conf}" in compose
+
+
+def _block(text, header):
+    """The body of the `{ ... }` block opened by `header`, braces balanced."""
+    start = text.index(header)
+    open_at = text.index("{", start)
+    depth = 0
+    for i in range(open_at, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_at + 1 : i]
+    raise AssertionError(f"unbalanced braces after {header!r}")
+
+
+def _directive_lines(block):
+    """Directive lines of a block, comments and blank lines dropped."""
+    lines = [line.strip() for line in block.splitlines()]
+    return [line for line in lines if line and not line.startswith("#")]
+
+
+@pytest.mark.parametrize("path", [_PROD, _HTTP], ids=["prod", "http"])
+class TestPrerenderedBlogPages:
+    """The UI build writes /blog/index.html and /blog/<slug>/index.html.
+
+    `$uri/` alone would answer /blog/<slug> with a redirect to
+    /blog/<slug>/ (the canonical URL has no trailing slash). And try_files
+    serves a found file inside the location it runs in, so these pages never
+    reach the `location = /index.html` block: without a location of their own
+    they would go out with no CSP, no framing header and no script nonce,
+    which the theme bootstrap <script> in the shell needs to run.
+    """
+
+    def test_serves_the_prerendered_file_before_the_spa_fallback(self, path):
+        blog = _block(_directives(path), "location ^~ /blog {")
+        assert "try_files $uri $uri/index.html /index.html;" in blog
+
+    def test_sits_inside_the_spa_location(self, path):
+        spa = _block(_directives(path), "location / {\n            if (-f /etc/nginx/maintenance.on)")
+        assert "location ^~ /blog {" in spa
+
+    def test_honours_maintenance_mode(self, path):
+        # Rewrite-phase directives are not inherited by nested locations.
+        blog = _block(_directives(path), "location ^~ /blog {")
+        assert "if (-f /etc/nginx/maintenance.on) { return 503; }" in blog
+
+    def test_headers_match_the_index_html_block(self, path):
+        text = _directives(path)
+        index = _directive_lines(_block(text, "location = /index.html {"))
+        blog = _directive_lines(_block(text, "location ^~ /blog {"))
+        # Everything the shell gets (nonce, no-cache, CSP and the other
+        # security headers), in the same order and spelling.
+        assert [line for line in blog if not line.startswith(("try_files", "if "))] == index
+        assert "sub_filter '<script>' '<script nonce=\"$request_id\">';" in blog
+        assert any(line.startswith("add_header Content-Security-Policy") for line in blog)
+

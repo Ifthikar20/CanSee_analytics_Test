@@ -33,3 +33,15 @@ describe('LandingPage: Pricing', () => {
         expect(footer[0]).toEqual(['Pricing', '/pricing'])
     })
 })
+
+describe('LandingPage: Blog', () => {
+    it('links the blog from the Resources menu, the menu sheet and the footer', async () => {
+        const wrapper = await render()
+        const resources = wrapper.findAll('#lp-menu-resources a').map((a) => [a.find('.lp-dd-label').text(), a.attributes('href')])
+        expect(resources[0]).toEqual(['Blog', '/blog'])
+        const sheet = wrapper.findAll('.lp-sheet a').map((a) => [a.text(), a.attributes('href')])
+        expect(sheet).toContainEqual(['Blog', '/blog'])
+        const footer = wrapper.findAll('.lp-foot-links a').map((a) => [a.text(), a.attributes('href')])
+        expect(footer[1]).toEqual(['Blog', '/blog'])
+    })
+})
