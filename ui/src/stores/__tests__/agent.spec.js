@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { computed } from 'vue'
 
-const rm = vi.hoisted(() => ({ hooks: null, attached: [], detached: [] }))
+const rm = vi.hoisted(() => ({ hooks: null, attached: [], detached: [], nudges: 0 }))
 
 vi.mock('@/api/client', () => ({
     default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() },
@@ -44,7 +44,7 @@ vi.mock('@/lib/agent/runManager', () => ({
     createRunManager(hooks) {
         rm.hooks = hooks
         const sessions = new Map()
-        return {
+        const manager = {
             attach(run) {
                 rm.attached.push({ id: run.id, lastSeq: run.lastSeq })
                 sessions.set(String(run.id), run)
@@ -57,8 +57,14 @@ vi.mock('@/lib/agent/runManager', () => ({
                 for (const id of [...sessions.keys()]) this.detach(id)
             },
             isAttached: (id) => sessions.has(String(id)),
+            // Stores of earlier tests still listen for online; count this test's only.
+            nudge() {
+                if (rm.manager === manager) rm.nudges += 1
+            },
             sessions,
         }
+        rm.manager = manager
+        return manager
     },
 }))
 
@@ -170,6 +176,7 @@ beforeEach(() => {
     rm.hooks = null
     rm.attached = []
     rm.detached = []
+    rm.nudges = 0
     auth = useAuthStore()
     auth.accessToken = 'token'
     auth.user = { id: 7 }
@@ -752,6 +759,130 @@ describe('agent store: resync, stop and transport loss', () => {
         expect(store.runs[RUN_ID].phase).toBe('failed')
         expect(store.messages[ASSISTANT_ID].status).toBe('interrupted')
         expect(store.isChatBusy(CHAT_ID)).toBe(false)
+    })
+})
+
+describe('agent store: replies the server left streaming, the agent going down, the run queue', () => {
+    it('a reply saved as streaming with no active run is interrupted, not live, after a reload', async () => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(
+            ok(
+                chatDetail({
+                    current_leaf_id: ASSISTANT_ID,
+                    messages: [userMessage(), emptyAssistant({ status: 'streaming', parts: [{ id: 'p', type: 'text', text: 'Half' }] })],
+                    active_run: null,
+                })
+            )
+        )
+        await store.openChat(CHAT_ID)
+        expect(store.messages[ASSISTANT_ID].status).toBe('interrupted')
+        expect(store.messages[ASSISTANT_ID].parts[0].text).toBe('Half')
+        expect(store.isChatBusy(CHAT_ID)).toBe(false)
+        expect(rm.attached).toEqual([])
+    })
+
+    it("leaves the active run's streaming reply live", async () => {
+        await initProject()
+        await openRunningChat()
+        expect(store.messages[ASSISTANT_ID].status).toBe('streaming')
+        expect(store.isChatBusy(CHAT_ID)).toBe(true)
+    })
+
+    it('a resync that finds the run over while its reply is still saved as streaming ends it interrupted', async () => {
+        await initProject()
+        await openRunningChat()
+        agentApi.getChat.mockResolvedValueOnce(
+            ok(chatDetail({ current_leaf_id: ASSISTANT_ID, messages: [userMessage(), emptyAssistant({ status: 'streaming', parts_seq: 30 })] }))
+        )
+        const result = await rm.hooks.onResync(RUN_ID, 'agent_unavailable')
+        expect(result.active).toBe(false)
+        expect(store.runs[RUN_ID].phase).toBe('failed')
+        expect(store.messages[ASSISTANT_ID].status).toBe('interrupted')
+        expect(store.isChatBusy(CHAT_ID)).toBe(false)
+    })
+
+    it('a stop check that finds the run over with its reply streaming ends it interrupted, so Retry works', async () => {
+        vi.useFakeTimers()
+        await initProject()
+        await openRunningChat()
+        agentApi.cancelRun.mockResolvedValueOnce(ok({ status: 'running' }))
+        await store.stop(CHAT_ID)
+        agentApi.getChat.mockResolvedValueOnce(
+            ok(chatDetail({ current_leaf_id: ASSISTANT_ID, messages: [userMessage(), emptyAssistant({ status: 'streaming' })] }))
+        )
+        await vi.advanceTimersByTimeAsync(8000)
+        expect(store.messages[ASSISTANT_ID].status).toBe('interrupted')
+        expect(store.isChatBusy(CHAT_ID)).toBe(false)
+    })
+
+    it('refreshes the agent status once when the transport loses the agent', async () => {
+        await initProject()
+        await openRunningChat()
+        agentApi.status.mockClear()
+        agentApi.status.mockResolvedValue(ok({ enabled: true, live_available: false, configured: true }))
+        rm.hooks.onTransport(RUN_ID, { state: 'offline', mode: 'sse', attempt: 0 })
+        rm.hooks.onTransport(RUN_ID, { state: 'offline', mode: 'sse', attempt: 1 })
+        await flush()
+        expect(agentApi.status).toHaveBeenCalledTimes(1)
+        expect(store.status.live_available).toBe(false)
+        expect(store.runs[RUN_ID].transport.state).toBe('offline')
+        rm.hooks.onTransport(RUN_ID, { state: 'open', mode: 'sse', attempt: 0 })
+        rm.hooks.onTransport(RUN_ID, { state: 'offline', mode: 'sse', attempt: 0 })
+        expect(agentApi.status).toHaveBeenCalledTimes(2)
+    })
+
+    it('reconnects at once when the browser is back online or the tab is shown again', async () => {
+        await initProject()
+        window.dispatchEvent(new Event('online'))
+        expect(rm.nudges).toBe(1)
+        document.dispatchEvent(new Event('visibilitychange'))
+        expect(rm.nudges).toBe(document.visibilityState === 'visible' ? 2 : 1)
+    })
+
+    it('keeps the place in line from the 202, run.queued and poll answers, and drops it once the run starts', async () => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(ok(chatDetail()))
+        await store.openChat(CHAT_ID)
+        agentApi.sendMessage.mockResolvedValueOnce(
+            accepted({
+                run: {
+                    id: RUN_ID,
+                    chat_id: CHAT_ID,
+                    message_id: ASSISTANT_ID,
+                    status: 'queued',
+                    last_seq: 0,
+                    queue: { position: 3, ahead: 2, slots: 6 },
+                },
+            })
+        )
+        await store.send({ chatId: CHAT_ID, text: 'Research Turonote' })
+        await flush()
+        expect(store.runs[RUN_ID].queue).toEqual({ position: 3, ahead: 2, slots: 6 })
+
+        const e = eventFactory()
+        rm.hooks.applyEvents(RUN_ID, [e('run.queued', { position: 2, ahead: 1, slots: 6 })])
+        expect(store.runs[RUN_ID].queue).toEqual({ position: 2, ahead: 1, slots: 6 })
+        rm.hooks.onQueue(RUN_ID, { position: 1, ahead: 0, slots: 6 })
+        expect(store.runs[RUN_ID].queue).toEqual({ position: 1, ahead: 0, slots: 6 })
+
+        // A web API chat detail never knows the line: its null does not erase the place.
+        agentApi.getChat.mockResolvedValueOnce(
+            ok(
+                chatDetail({
+                    current_leaf_id: ASSISTANT_ID,
+                    messages: [userMessage(), emptyAssistant({ status: 'streaming' })],
+                    active_run: { id: RUN_ID, status: 'queued', message_id: ASSISTANT_ID, last_seq: 1, queue: null },
+                })
+            )
+        )
+        await store.openChat(CHAT_ID, { force: true })
+        expect(store.runs[RUN_ID].queue).toEqual({ position: 1, ahead: 0, slots: 6 })
+
+        rm.hooks.applyEvents(RUN_ID, [e('run.started', { model: 'claude-opus-5-5' })])
+        expect(store.runs[RUN_ID].phase).toBe('running')
+        expect(store.runs[RUN_ID].queue).toBeNull()
+        rm.hooks.onQueue(RUN_ID, { position: 4, ahead: 3, slots: 6 })
+        expect(store.runs[RUN_ID].queue).toBeNull()
     })
 })
 

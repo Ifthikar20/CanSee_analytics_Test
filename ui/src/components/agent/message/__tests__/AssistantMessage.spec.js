@@ -109,6 +109,27 @@ describe('AssistantMessage Retry', () => {
     expect(w.find('.ag-msg-error-btn').exists()).toBe(false)
   })
 
+  it('a reply saved as streaming is not live once its run is over', () => {
+    const w = mountReply(
+      { message: reply({ status: 'streaming' }), run: { phase: 'failed', error: null } },
+      { WorkedLabel: false }
+    )
+    expect(w.find('.ag-worked').classes()).not.toContain('is-live')
+    expect(w.text()).not.toContain('Working')
+  })
+
+  it('reloads the chat from a reply this tab stopped following', async () => {
+    fakeAgent.openChat = vi.fn(async () => null)
+    const w = mountReply({
+      message: reply({ status: 'interrupted', error_code: 'resync_failed', error_message: 'resync did not converge' }),
+      run: { phase: 'failed', settledLocally: true, error: { code: 'resync_failed', message: 'resync did not converge', retryable: false } },
+    })
+    const reload = w.findAll('.ag-msg-error-btn').find((b) => b.text() === 'Reload chat')
+    await reload.trigger('click')
+    expect(fakeAgent.openChat).toHaveBeenCalledWith('c1', { force: true })
+    expect(fakeAgent.regenerate).not.toHaveBeenCalled()
+  })
+
   it('keeps Retry for a reply whose stream was lost', async () => {
     const w = mountReply({
       message: reply({ status: 'interrupted', error_code: 'not_found', error_message: "We couldn't find that." }),

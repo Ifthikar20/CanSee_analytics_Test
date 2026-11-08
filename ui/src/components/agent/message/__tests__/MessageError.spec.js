@@ -73,6 +73,36 @@ describe('errorCopy', () => {
 })
 
 describe('MessageError', () => {
+  it('offers Reload chat, not Retry, for a reply this tab stopped following', async () => {
+    const w = mountError({ code: 'resync_failed', message: 'resync did not converge', status: 'interrupted', canReload: true })
+    expect(w.text()).toContain('This reply stopped updating.')
+    expect(w.text()).toContain('It may still be running. Reload the chat to see where it is.')
+    expect(w.text()).not.toContain('resync did not converge')
+    const buttons = w.findAll('button')
+    expect(buttons.map((b) => b.text())).toEqual(['Reload chat'])
+    await buttons[0].trigger('click')
+    expect(w.emitted('reload')).toHaveLength(1)
+    expect(w.emitted('retry')).toBeUndefined()
+  })
+
+  it('has user copy for a lost connection with no code, and Reload only where the parent can reload', () => {
+    const copy = errorCopy('transport', 'HTTP 400', 'interrupted')
+    expect(copy).toMatchObject({ title: 'The connection to this reply was lost.', reload: true })
+    const w = mountError({ code: 'transport', message: 'HTTP 400', status: 'interrupted' })
+    expect(w.text()).not.toContain('HTTP 400')
+    expect(w.findAll('button').map((b) => b.text())).toEqual(['Retry'])
+  })
+
+  it('shows the staff hint below the copy', () => {
+    const w = mountError({
+      code: 'agent_not_configured',
+      status: 'failed',
+      hint: 'Set ANTHROPIC_API_KEY on the server, then restart the backend and the agent process.',
+    })
+    expect(w.text()).toContain("The AI agent isn't set up on this workspace.")
+    expect(w.text()).toContain('Set ANTHROPIC_API_KEY on the server')
+  })
+
   it('offers no Retry when the reply hit its cost limit', () => {
     const w = mountError({ code: 'run_cost_limit', message: 'This reply reached the $3.00 cost limit for one reply.' })
     expect(w.text()).toContain('This reply reached its cost limit and was stopped.')
