@@ -4,6 +4,8 @@ import {
     errorCopy,
     normalizeError,
     normalizeFinding,
+    normalizeQueue,
+    normalizeRun,
     normalizeSwarmDetail,
     normalizeSwarmVersion,
     taskError,
@@ -223,5 +225,27 @@ describe('research agent error copy', () => {
         const bare = normalizeError(axiosError(503, { code: 'swarm_disabled' }))
         expect(bare.message).toBe('The research agents are turned off on this server.')
         expect(bare.retryable).toBe(true)
+    })
+})
+
+describe('normalizeQueue and the run queue', () => {
+    it('keeps a place in line and fills what is missing', () => {
+        expect(normalizeQueue({ position: 2, ahead: 1, slots: 6 })).toEqual({ position: 2, ahead: 1, slots: 6 })
+        expect(normalizeQueue({ position: 3 })).toEqual({ position: 3, ahead: 2, slots: null })
+    })
+
+    it('is null when the run is not waiting or the value is not a place in line', () => {
+        for (const raw of [null, undefined, 'x', {}, { position: 0 }, { position: -1 }, { position: 1.5 }]) {
+            expect(normalizeQueue(raw)).toBeNull()
+        }
+    })
+
+    it('normalizeRun reads the queue field and tolerates servers without it', () => {
+        expect(normalizeRun({ id: 'r1', status: 'queued', queue: { position: 1, ahead: 0, slots: 4 } }).queue).toEqual({
+            position: 1,
+            ahead: 0,
+            slots: 4,
+        })
+        expect(normalizeRun({ id: 'r1', status: 'queued' }).queue).toBeNull()
     })
 })

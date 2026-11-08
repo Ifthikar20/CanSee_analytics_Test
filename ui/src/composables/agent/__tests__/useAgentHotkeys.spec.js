@@ -248,6 +248,35 @@ describe('useAgentHotkeys', () => {
     expect(fakeAgent.stop).not.toHaveBeenCalled()
   })
 
+  it('leaves Escape to an open modal dialog that is not a reka layer, so a run keeps going', async () => {
+    const ctx = await setup('/projects/w1/agent/c/c9')
+    wrapper = ctx.wrapper
+    fakeAgent.busy = { c9: true }
+    // As BaseModal renders (Add project): a teleported card, role=dialog aria-modal=true.
+    const modal = document.createElement('div')
+    modal.setAttribute('role', 'dialog')
+    modal.setAttribute('aria-modal', 'true')
+    const field = document.createElement('input')
+    modal.appendChild(field)
+    document.body.appendChild(modal)
+    expect(press({ key: 'Escape' }).defaultPrevented).toBe(false)
+    expect(press({ key: 'Escape' }, field).defaultPrevented).toBe(false)
+    expect(fakeAgent.stop).not.toHaveBeenCalled()
+    modal.remove()
+
+    // A dialog without aria-modal counts too.
+    const plain = document.createElement('div')
+    plain.setAttribute('role', 'dialog')
+    document.body.appendChild(plain)
+    press({ key: 'Escape' })
+    expect(fakeAgent.stop).not.toHaveBeenCalled()
+    plain.remove()
+
+    // Once it is closed, Escape stops the run again.
+    expect(press({ key: 'Escape' }).defaultPrevented).toBe(true)
+    expect(fakeAgent.stop).toHaveBeenCalledWith('c9')
+  })
+
   it('closes the drawer on Escape when narrow', async () => {
     const ctx = await setup('/projects/w1/agent')
     wrapper = ctx.wrapper

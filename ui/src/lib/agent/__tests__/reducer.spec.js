@@ -197,6 +197,37 @@ describe('turn.reset', () => {
 })
 
 describe('lifecycle', () => {
+    it('records the place in line from run.queued and clears it on run.started', () => {
+        const e = eventFactory()
+        const queued = reduceEvents(snapshot(), [e('run.queued', { position: 3, ahead: 2, slots: 6 })])
+        expect(queued.run.phase).toBe('queued')
+        expect(queued.run.queue).toEqual({ position: 3, ahead: 2, slots: 6 })
+        expect(queued.effects).toEqual([])
+        const moved = reduceEvents({ ...queued }, [e('run.queued', { position: 1, ahead: 0, slots: 6 })])
+        expect(moved.run.queue).toEqual({ position: 1, ahead: 0, slots: 6 })
+        const started = reduceEvents({ ...moved }, [e('run.started', { model: 'claude-opus-5-5' })])
+        expect(started.run.phase).toBe('running')
+        expect(started.run.queue).toBeNull()
+    })
+
+    it('ignores run.queued once the run has started, and a malformed place in line', () => {
+        const e = eventFactory()
+        const running = reduceEvents(snapshot({ run: { phase: 'running' } }), [e('run.queued', { position: 2, ahead: 1, slots: 6 })])
+        expect(running.run.queue).toBeNull()
+        const bad = reduceEvents(snapshot(), [e('run.queued', { position: 0 })])
+        expect(bad.run.queue).toBeNull()
+    })
+
+    it('a run that ends while it waits leaves no place in line', () => {
+        const e = eventFactory()
+        const out = reduceEvents(snapshot(), [
+            e('run.queued', { position: 2, ahead: 1, slots: 6 }),
+            e('run.cancelled', {}),
+        ])
+        expect(out.run.phase).toBe('cancelled')
+        expect(out.run.queue).toBeNull()
+    })
+
     it('keeps a requested cancel through run.started', () => {
         const e = eventFactory()
         const out = reduceEvents(snapshot({ run: { phase: 'cancelling' } }), [e('run.started', { model: 'claude-opus-5-5' })])
