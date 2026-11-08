@@ -61,6 +61,35 @@ def test_a_fabricated_quote_is_dropped_from_the_scan():
     assert payload.voice == "No jargon, no fuss"
 
 
+def test_a_quote_cut_mid_word_grounds_nothing():
+    # "Kent" is not on the page; it is the start of "Kentucky".
+    page = "We serve independent tutors in Kentucky and Ohio."
+    assert _value("Kent tutors", "tutors in Kent", page) == ""
+    assert _value("Tutors in Kent", "pendent tutors in Kent", page) == ""
+    assert _value("Kentucky tutors", "tutors in Kentucky", page) == "Kentucky tutors"
+    # Punctuation next to the quote still counts as a word boundary.
+    assert _value("Ohio tutors", "tutors in Kentucky and Ohio", page) == "Ohio tutors"
+
+
+def test_a_quote_cut_mid_word_is_dropped_from_the_scan():
+    from apps.onboarding.tests.test_brand_profile import _THIN_SCAN, FakeClaude, _scan
+
+    FakeClaude.responses = {"brand_profile": json.dumps({
+        # The page says "independent tutors"; "pendent" is not a word on it.
+        "industry": {"value": "Pendent tutors", "evidence": "pendent tutors and tutoring"},
+        "offerings": [],
+        "audience": {"value": "", "evidence": ""},
+        "voice": {"value": "", "evidence": ""},
+    })}
+    FakeClaude.calls = []
+    FakeClaude.configured = True
+    with patch.object(onboarding_service, "ClaudeUtility", FakeClaude), \
+         patch.object(onboarding_service, "_safe_discover_competitors", return_value=[]), \
+         patch("apps.prompt_library.services.logo_crawler.fetch_site_logo", return_value=""):
+        payload = _scan(_THIN_SCAN)
+    assert payload.industry == ""
+
+
 def test_three_words_under_eight_characters_are_too_short():
     page = "Rent a ski 4 less every winter."
     assert _value("Ski", "a ski 4", page) == ""
