@@ -14,6 +14,7 @@ import {
   hasTaskForm,
   missingFields,
   taskText,
+  templatePlan,
 } from '../taskTemplates'
 import { AGENT_KEY_LIST } from '../types'
 
@@ -163,6 +164,19 @@ describe('task templates of the general agents and the research agents', () => {
     expect(formTaskText(RESEARCH_AGENTS_KEY, 'prompt', { prompt: '  best note app  ', max_prompts: 5 })).toBe(
       'Run the research agents on one prompt: "best note app".\nCompare where Google ranks us with how each AI engine answers it.'
     )
+  })
+
+  it('states the research plan a preset asks for beyond the default', () => {
+    // The competitor check asks for 2 competitor pages a prompt, and says so.
+    expect(templatePlan(RESEARCH_AGENTS_KEY, 'competitors')).toEqual({ competitorPages: 2 })
+    expect(formTemplate(RESEARCH_AGENTS_KEY, 'competitors').text).toContain('Read 2 competitor pages per prompt')
+    for (const key of ['gap', 'sources', 'prompt']) {
+      expect(templatePlan(RESEARCH_AGENTS_KEY, key), key).toEqual({})
+      expect(formTemplate(RESEARCH_AGENTS_KEY, key).text, key).not.toMatch(/competitor pages/)
+    }
+    expect(templatePlan('landing_page', 'search')).toEqual({})
+    expect(templatePlan('page_optimizer', 'x')).toEqual({})
+    expect(templatePlan(null)).toEqual({})
   })
 
   it('drafts the Gap Analyst templates', () => {

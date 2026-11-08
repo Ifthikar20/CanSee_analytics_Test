@@ -6,9 +6,13 @@ import {
   blockHelp,
   hidesDollars,
   listNames,
+  promptRunsLeft,
   researchBlock,
   researchCeiling,
+  researchFit,
   researchPromptLimit,
+  researchRunsCost,
+  researchRunsLine,
   setupSummary,
   workspaceBlock,
 } from '../availability'
@@ -387,6 +391,170 @@ describe('the research ceiling', () => {
     expect(researchPromptLimit(status({ swarm: undefined }))).toBeNull()
     const none = ENGINES.map((e) => ({ ...e, configured: false }))
     expect(researchPromptLimit(status({ engines: none, google: { configured: false } }))).toBeNull()
+  })
+})
+
+describe('the research plan: competitor pages', () => {
+  const five = ENGINES.map((e) => ({ ...e, configured: true }))
+
+  it('fits the competitor check (2 competitor pages a prompt) in the ceiling', () => {
+    // 1 Google page + 2 competitor pages + 5 engines + 2 gaps + 1 citations = 11; 50 / 11 = 4.
+    expect(researchPromptLimit(status({ engines: five }), { competitorPages: 2 })).toBe(4)
+    expect(researchFit(status({ engines: five }), { competitorPages: 2 }).perPrompt).toBe(11)
+    // The default plan reads one competitor page: 10 a prompt, 5 prompts.
+    expect(researchPromptLimit(status({ engines: five }), {})).toBe(5)
+    expect(researchFit(status({ engines: five })).perPrompt).toBe(10)
+    // 4 x 11 = 44 fits; 5 x 11 = 55 would be refused (tools/swarm.py _check_size).
+    const n = researchPromptLimit(status({ engines: five }), { competitorPages: 2 })
+    expect(n * 11).toBeLessThanOrEqual(50)
+    expect((n + 1) * 11).toBeGreaterThan(50)
+    expect(researchPromptLimit(status({ engines: five, swarm: { max_agents: 30 } }), { competitorPages: 2 })).toBe(2)
+    // No competitor pages: 9 a prompt.
+    expect(researchFit(status({ engines: five }), { competitorPages: 0 }).perPrompt).toBe(9)
+  })
+
+  it('reads no competitor pages without Google results', () => {
+    // 5 engines + 2 + 1 = 8, whatever the competitor pages.
+    const noGoogle = status({ engines: five, google: { configured: false } })
+    expect(researchFit(noGoogle, { competitorPages: 2 }).perPrompt).toBe(8)
+    expect(researchPromptLimit(noGoogle, { competitorPages: 2 })).toBe(5)
+  })
+
+  it('ignores a bad competitor page count', () => {
+    expect(researchFit(status({ engines: five }), { competitorPages: 'x' }).perPrompt).toBe(9)
+    expect(researchFit(status({ engines: five }), { competitorPages: -3 }).perPrompt).toBe(9)
+    expect(researchFit(status({ engines: five }), undefined).perPrompt).toBe(10)
+  })
+})
+
+describe('the research plan: free prompt runs', () => {
+  const five = ENGINES.map((e) => ({ ...e, configured: true }))
+  // A free account: runs counted, no dollars.
+  const free = (runs, over = {}) =>
+    status({
+      engines: five,
+      allowance: { cap_usd: '3.00', spent_usd: '0.00', exceeded: false, show_usd: false },
+      prompt_runs: { unlimited: false, limit: 20, used: 0, reserved: 0, ...runs },
+      ...over,
+    })
+
+  it('reads the runs left: remaining, else limit - used - reserved', () => {
+    expect(promptRunsLeft(free({ remaining: 3 }))).toBe(3)
+    expect(promptRunsLeft(free({ remaining: undefined, used: 15, reserved: 2 }))).toBe(3)
+    expect(promptRunsLeft(free({ remaining: undefined, used: 25 }))).toBe(0)
+    expect(promptRunsLeft(free({ remaining: undefined, limit: null }))).toBeNull()
+    expect(promptRunsLeft(status())).toBeNull()
+    expect(promptRunsLeft(status({ prompt_runs: undefined }))).toBeNull()
+    expect(promptRunsLeft(null)).toBeNull()
+  })
+
+  it('caps the prompts at the runs left over the engines set up', () => {
+    // A new free account: 20 runs, 5 engines: 4 prompts (20 runs), not 5 (25).
+    expect(researchPromptLimit(free({ remaining: 20 }))).toBe(4)
+    expect(researchFit(free({ remaining: 20 })).limitedBy).toBe('runs')
+    // 13 left: 2 prompts (10 runs).
+    expect(researchPromptLimit(free({ remaining: 13 }))).toBe(2)
+    // 5 left: exactly one prompt on every engine.
+    expect(researchPromptLimit(free({ remaining: 5 }))).toBe(1)
+    // Plenty left: the ceiling limits it.
+    const big = free({ limit: 100, remaining: 100 })
+    expect(researchPromptLimit(big)).toBe(5)
+    expect(researchFit(big).limitedBy).toBe('ceiling')
+    expect(researchFit(big).short).toBe('')
+    // The runs and the competitor pages together: the smaller wins.
+    expect(researchPromptLimit(free({ limit: 100, remaining: 100 }), { competitorPages: 2 })).toBe(4)
+    expect(researchPromptLimit(free({ remaining: 10 }), { competitorPages: 2 })).toBe(2)
+  })
+
+  it('never offers a plan the runs left cannot pay for', () => {
+    for (let left = 0; left <= 30; left += 1) {
+      for (let k = 1; k <= 5; k += 1) {
+        const engines = ENGINES.map((e, i) => ({ ...e, configured: i < k }))
+        const n = researchPromptLimit(free({ remaining: left }, { engines }))
+        if (n === null) expect(left, `${left} left, ${k} engines`).toBeLessThan(k)
+        else expect(n * k, `${left} left, ${k} engines`).toBeLessThanOrEqual(left)
+      }
+    }
+  })
+
+  it('has no prompt count when not even one prompt fits, and says why', () => {
+    // The reviewer's case: 3 left, 5 engines.
+    const few = researchFit(free({ remaining: 3 }))
+    expect(few.prompts).toBeNull()
+    expect(few.short).toBe('few_runs')
+    expect(researchPromptLimit(free({ remaining: 3 }))).toBeNull()
+    const none = researchFit(free({ remaining: 0 }))
+    expect(none.prompts).toBeNull()
+    expect(none.short).toBe('no_runs')
+    expect(none.runsLeft).toBe(0)
+  })
+
+  it('counts only the engines set up', () => {
+    // 2 engines set up, 3 left: one prompt.
+    expect(researchPromptLimit(free({ remaining: 3 }, { engines: ENGINES }))).toBe(1)
+    // Unknown engines count as all five.
+    expect(researchPromptLimit(free({ remaining: 9 }, { engines: undefined }))).toBe(1)
+    expect(researchFit(free({ remaining: 9 }, { engines: undefined })).enginesKnown).toBe(false)
+  })
+
+  it('needs no runs for Google results alone', () => {
+    const none = ENGINES.map((e) => ({ ...e, configured: false }))
+    const fit = researchFit(free({ remaining: 0 }, { engines: none }))
+    // 1 Google page + 1 competitor page + 2 gaps = 4; 50 / 4 = 12, capped at 5.
+    expect(fit.prompts).toBe(5)
+    expect(fit.short).toBe('')
+    expect(fit.limitedBy).toBe('ceiling')
+  })
+
+  it('leaves a paid account on the ceiling', () => {
+    expect(researchPromptLimit(status({ engines: five }))).toBe(5)
+    expect(researchFit(status({ engines: five })).runsLeft).toBeNull()
+    // A paid account whose server hides dollars but counts no runs.
+    expect(researchPromptLimit(status({ engines: five, allowance: { show_usd: false } }))).toBe(5)
+  })
+
+  it('words what the runs left allow', () => {
+    expect(researchRunsLine(researchFit(free({ remaining: 13 })))).toBe(
+      'With 13 free prompt runs left and 5 AI engines set up, one research covers up to 2 prompts.'
+    )
+    expect(researchRunsLine(researchFit(free({ remaining: 5 })))).toBe(
+      'With 5 free prompt runs left and 5 AI engines set up, one research covers up to 1 prompt.'
+    )
+    const one = [{ key: 'chatgpt', label: 'ChatGPT', configured: true }]
+    expect(researchRunsLine(researchFit(free({ remaining: 3 }, { engines: one, swarm: { max_agents: 50 } })))).toBe(
+      'With 3 free prompt runs left and 1 AI engine set up, one research covers up to 3 prompts.'
+    )
+    expect(researchRunsLine(researchFit(free({ remaining: 3 })))).toBe(
+      '3 free prompt runs left: one prompt asks all 5 AI engines set up here, so ask for fewer engines.'
+    )
+    expect(researchRunsLine(researchFit(free({ remaining: 1 })))).toBe(
+      '1 free prompt run left: one prompt asks all 5 AI engines set up here, so ask for fewer engines.'
+    )
+    expect(researchRunsLine(researchFit(free({ remaining: 0 })))).toBe(
+      'No free prompt runs are left this month, so a research cannot ask the AI engines until they renew.'
+    )
+    // The ceiling limits it, or no runs are counted: nothing to add.
+    expect(researchRunsLine(researchFit(free({ limit: 100, remaining: 100 })))).toBe('')
+    expect(researchRunsLine(researchFit(status()))).toBe('')
+    expect(researchRunsLine(null)).toBe('')
+  })
+
+  it('words the runs a research takes', () => {
+    const fit = researchFit(free({ remaining: 13 }))
+    expect(researchRunsCost(fit, 2)).toBe('Up to 2 prompts × 5 AI engines = 10 free prompt runs; 13 left this month.')
+    expect(researchRunsCost(fit, 1)).toBe('Up to 1 prompt × 5 AI engines = 5 free prompt runs; 13 left this month.')
+    const one = [{ key: 'chatgpt', label: 'ChatGPT', configured: true }]
+    expect(researchRunsCost(researchFit(free({ remaining: 1 }, { engines: one })), 1)).toBe(
+      'Up to 1 prompt × 1 AI engine = 1 free prompt run; 1 left this month.'
+    )
+    // Unknown prompts, runs or engines, or Google only: nothing stated.
+    expect(researchRunsCost(fit, null)).toBe('')
+    expect(researchRunsCost(fit, 0)).toBe('')
+    expect(researchRunsCost(researchFit(status()), 2)).toBe('')
+    expect(researchRunsCost(researchFit(free({ remaining: 9 }, { engines: undefined })), 1)).toBe('')
+    const none = ENGINES.map((e) => ({ ...e, configured: false }))
+    expect(researchRunsCost(researchFit(free({ remaining: 9 }, { engines: none })), 3)).toBe('')
+    expect(researchRunsCost(null, 2)).toBe('')
   })
 })
 

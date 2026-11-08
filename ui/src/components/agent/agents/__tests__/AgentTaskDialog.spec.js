@@ -309,7 +309,7 @@ describe('AgentTaskDialog task templates', () => {
       ['Coda', true],
     ])
     expect(preview()).toBe(
-      'Run the research agents to compare us with Evernote (evernote.com) and Coda (coda.io) on our tracked prompts.\nRead 2 competitor pages per prompt and list what their pages do that ours do not.\nUse up to 3 of our tracked prompts.'
+      'Run the research agents to compare us with Evernote (evernote.com) and Coda (coda.io) on our tracked prompts.\nRead 2 competitor pages per prompt and list what their pages do that ours do not.\nUse up to 2 of our tracked prompts.'
     )
     expect(dialog().textContent).toContain('Nothing runs until you send it.')
     competitorBoxes()[1].click()
@@ -319,7 +319,7 @@ describe('AgentTaskDialog task templates', () => {
       websiteId: 'w1',
       agent: 'gap_analyst',
       from: 'agents',
-      text: 'Run the research agents to compare us with Evernote (evernote.com) on our tracked prompts.\nRead 2 competitor pages per prompt and list what their pages do that ours do not.\nUse up to 3 of our tracked prompts.',
+      text: 'Run the research agents to compare us with Evernote (evernote.com) on our tracked prompts.\nRead 2 competitor pages per prompt and list what their pages do that ours do not.\nUse up to 2 of our tracked prompts.',
     })
     expect(agentApi.sendMessage).not.toHaveBeenCalled()
   })
@@ -402,11 +402,94 @@ describe('AgentTaskDialog task templates', () => {
     }
     const first = await open('research_agents', { status: free })
     const text = dialog().textContent
-    expect(text).toContain('Each prompt answered by one AI engine uses one free prompt run. 13 free prompt runs left this month.')
-    expect(text).not.toMatch(/\$/)
+    expect(text).toContain('Each prompt answered by one AI engine uses one free prompt run. Up to 2 prompts × 5 AI engines = 10 free prompt runs; 13 left this month.')
+    // The Gap Analyst plans its own research: the runs left, without a total.
     first.unmount()
+    const second = await open('gap_analyst', { status: free })
+    expect(dialog().textContent).toContain('Each prompt answered by one AI engine uses one free prompt run. 13 free prompt runs left this month.')
+    expect(dialog().textContent).not.toContain('×')
+    expect(text).not.toMatch(/\$/)
+    expect(dialog().textContent).not.toMatch(/\$/)
+    second.unmount()
     await open('gap_analyst', { status: RESEARCH_STATUS })
     expect(dialog().textContent).toContain('The whole reply, research included, stops at $3.00.')
+  })
+
+  it('counts the competitor check with its 2 competitor pages a prompt', async () => {
+    // Ceiling 50, Google and 5 engines: 11 agents a prompt for the competitor
+    // check (4 prompts), 10 for the other presets (5 prompts).
+    await open('research_agents', { status: { ...RESEARCH_STATUS, swarm: { enabled: true, max_agents: 50 } }, template: 'competitors' })
+    expect(preview()).toContain('Use up to 4 of our tracked prompts.')
+    await pick('Google vs AI gap')
+    expect(preview()).toContain('Use up to 5 of our tracked prompts.')
+    await pick('Competitor check')
+    expect(preview()).toContain('Use up to 4 of our tracked prompts.')
+  })
+
+  describe('on a free account', () => {
+    const free = (runs, over = {}) => ({
+      ...RESEARCH_STATUS,
+      swarm: { enabled: true, max_agents: 50 },
+      allowance: { cap_usd: '3.00', spent_usd: '0.00', exceeded: false, show_usd: false },
+      prompt_runs: { unlimited: false, limit: 20, used: 0, reserved: 0, ...runs },
+      ...over,
+    })
+    const cost = () => [...dialog().querySelectorAll('.ag-atd-cost')].map((p) => p.textContent.trim()).join(' ')
+
+    it('drafts no more prompts than the free prompt runs left pay for, and states the total', async () => {
+      // A new account: 20 runs, 5 engines: 4 prompts (20 runs), not 5 (25).
+      await open('research_agents', { status: free({ remaining: 20 }), template: 'gap' })
+      expect(preview()).toContain('Use up to 4 of our tracked prompts.')
+      expect(cost()).toBe(
+        'Each prompt answered by one AI engine uses one free prompt run. Up to 4 prompts × 5 AI engines = 20 free prompt runs; 20 left this month.'
+      )
+      expect(dialog().textContent).not.toMatch(/\$/)
+      await pick('Sources audit')
+      expect(preview()).toContain('Use up to 4 of our tracked prompts.')
+      // The one-prompt preset takes one prompt's runs.
+      await pick('Check one prompt')
+      expect(cost()).toContain('Up to 1 prompt × 5 AI engines = 5 free prompt runs; 20 left this month.')
+    })
+
+    it('fits 13 runs left into 2 prompts', async () => {
+      await open('research_agents', { status: free({ remaining: 13 }), template: 'competitors' })
+      expect(preview()).toContain('Use up to 2 of our tracked prompts.')
+      expect(cost()).toContain('Up to 2 prompts × 5 AI engines = 10 free prompt runs; 13 left this month.')
+    })
+
+    it('leaves out the prompt count and asks for fewer engines when one prompt does not fit', async () => {
+      await open('research_agents', { status: free({ remaining: 3 }), template: 'gap' })
+      expect(preview()).toBe(
+        'Run the research agents on our tracked prompts and compare where Google ranks us with how each AI engine answers.'
+      )
+      expect(cost()).toBe(
+        'Each prompt answered by one AI engine uses one free prompt run. 3 free prompt runs left: one prompt asks all 5 AI engines set up here, so ask for fewer engines.'
+      )
+    })
+
+    it('says no free prompt runs are left', async () => {
+      await open('research_agents', { status: free({ remaining: 0 }), template: 'sources' })
+      expect(preview()).not.toContain('Use up to')
+      expect(cost()).toBe(
+        'Each prompt answered by one AI engine uses one free prompt run. No free prompt runs are left this month, so a research cannot ask the AI engines until they renew.'
+      )
+    })
+
+    it('keeps the plain line when the engines set up are not listed', async () => {
+      await open('research_agents', { status: free({ remaining: 13 }, { engines: undefined }), template: 'gap' })
+      // Unknown engines count as five for the count, but no total is guessed.
+      expect(preview()).toContain('Use up to 2 of our tracked prompts.')
+      expect(cost()).toBe('Each prompt answered by one AI engine uses one free prompt run. 13 free prompt runs left this month.')
+    })
+
+    it('follows a new status (the runs left change) while open', async () => {
+      const w = await open('research_agents', { status: free({ remaining: 20 }), template: 'gap' })
+      expect(preview()).toContain('Use up to 4 of our tracked prompts.')
+      await w.setProps({ status: free({ remaining: 6 }) })
+      await flushPromises()
+      expect(preview()).toContain('Use up to 1 of our tracked prompts.')
+      expect(cost()).toContain('Up to 1 prompt × 5 AI engines = 5 free prompt runs; 6 left this month.')
+    })
   })
 
   it('drafts the Gap Analyst templates', async () => {

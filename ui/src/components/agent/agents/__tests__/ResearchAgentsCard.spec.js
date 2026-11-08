@@ -58,6 +58,40 @@ describe('ResearchAgentsCard', () => {
     expect(document.getElementById(tip.attributes('aria-describedby')).textContent).toMatch(/per Google results page/)
   })
 
+  it('counts the prompts a free account can pay for with the prompt runs left', async () => {
+    const free = (remaining, over = {}) => ({
+      ...STATUS,
+      allowance: { cap_usd: '3.00', spent_usd: '0.00', exceeded: false, show_usd: false },
+      prompt_runs: { unlimited: false, limit: 20, used: 20 - remaining, reserved: 0, remaining },
+      ...over,
+    })
+    const meta = (w) => w.find('.ag-research-meta span').text()
+    // A new account: 20 runs over 5 engines covers 4 prompts, not the ceiling's 5.
+    const w = await mountCard({ status: free(20) })
+    expect(meta(w)).toBe('Up to 50 agents per research. With 20 free prompt runs left and 5 AI engines set up, one research covers up to 4 prompts.')
+    await w.setProps({ status: free(5) })
+    expect(meta(w)).toBe('Up to 50 agents per research. With 5 free prompt runs left and 5 AI engines set up, one research covers up to 1 prompt.')
+    // Fewer runs than engines: not one prompt fits.
+    await w.setProps({ status: free(3) })
+    expect(meta(w)).toBe('Up to 50 agents per research. 3 free prompt runs left: one prompt asks all 5 AI engines set up here, so ask for fewer engines.')
+    expect(meta(w)).not.toMatch(/enough for/)
+    await w.setProps({ status: free(0) })
+    expect(meta(w)).toBe(
+      'Up to 50 agents per research. No free prompt runs are left this month, so a research cannot ask the AI engines until they renew.'
+    )
+    // Plenty of runs: the ceiling limits it, worded as before.
+    await w.setProps({ status: free(100, { prompt_runs: { unlimited: false, limit: 100, remaining: 100 } }) })
+    expect(meta(w)).toBe('Up to 50 agents per research, enough for 5 prompts with what is set up here.')
+    // Google only: no runs needed.
+    await w.setProps({ status: free(0, { engines: ENGINES.map((e) => ({ ...e, configured: false })) }) })
+    expect(meta(w)).toBe('Up to 50 agents per research, enough for 5 prompts with what is set up here.')
+    // Never dollars.
+    expect(w.text()).not.toMatch(/\$/)
+    // The presets stay usable: the chat reports a refusal itself.
+    await w.setProps({ status: free(0) })
+    expect(presetButtons(w)[0].attributes('aria-disabled')).toBeUndefined()
+  })
+
   it('states the ceiling alone when nothing can be measured, and nothing without status', async () => {
     const none = { ...STATUS, engines: ENGINES.map((e) => ({ ...e, configured: false })), google: { configured: false } }
     const w = await mountCard({ status: none })
