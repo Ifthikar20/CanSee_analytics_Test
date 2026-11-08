@@ -1,9 +1,11 @@
+import argon2 from 'argon2';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 
 import {
   ORIGIN, OPERATOR, PASSWORD, login, makeApp, sessionCookie, signedIn,
 } from './helpers.js';
+import { createAuthenticator } from '../../server/auth.js';
 
 describe('POST /auth/login', () => {
   it('signs a valid operator in and sets a hardened session cookie', async () => {
@@ -178,5 +180,15 @@ describe('session', () => {
   it('logout without a session still succeeds', async () => {
     const { app } = await makeApp();
     expect((await request(app).post('/auth/logout').set('Origin', ORIGIN)).status).toBe(204);
+  });
+});
+
+describe('createAuthenticator at the production cost', () => {
+  it('verifies a default-cost argon2id hash and refuses unknown emails', async () => {
+    const hash = await argon2.hash(PASSWORD, { type: argon2.argon2id });
+    const authenticate = createAuthenticator([{ email: OPERATOR, passwordHash: hash }]);
+    expect(await authenticate(OPERATOR, PASSWORD)).toBe(OPERATOR);
+    expect(await authenticate(OPERATOR, 'not the password')).toBeNull();
+    expect(await authenticate('someone@example.com', PASSWORD)).toBeNull();
   });
 });

@@ -1,8 +1,214 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  normalizeAccount, normalizePage, normalizeUser, overviewTiles, planLabel,
+  normalizeAccount, normalizePage, normalizeUser, overviewPeriod, overviewTiles, planLabel,
 } from '../../client/src/lib/normalize.js';
+
+// Payloads exactly as the backend's internal admin API builds them
+// (apps/accounts/api/v1/admin_views.py and services/token_usage.py).
+function usageBlock(month, allTime, cost = { month: '0.000000', all_time: '0.000000' }) {
+  return {
+    tokens: {
+      month: { input: Math.floor(month / 2), output: month - Math.floor(month / 2), total: month, requests: 1 },
+      all_time: { input: Math.floor(allTime / 2), output: allTime - Math.floor(allTime / 2), total: allTime, requests: 3 },
+    },
+    cost_usd: cost,
+  };
+}
+
+const PERIOD = { month_start: '2026-11-01T00:00:00+00:00', as_of: '2026-11-08T12:00:00+00:00' };
+
+const OWNER_SEAT = {
+  user_id: '0b6c1f0e-1111-4aaa-8bbb-000000000001',
+  email: 'owner@acme.co',
+  full_name: 'Olive Owner',
+  role: 'owner',
+  joined_via: 'created',
+  joined_at: '2026-09-01T10:00:00+00:00',
+  active: true,
+  last_login: '2026-11-07T09:00:00+00:00',
+  ...usageBlock(4000, 90000),
+};
+const MEMBER_SEAT = {
+  user_id: '0b6c1f0e-1111-4aaa-8bbb-000000000002',
+  email: 'member@acme.co',
+  full_name: '',
+  role: 'member',
+  joined_via: 'invite',
+  joined_at: '2026-10-01T10:00:00+00:00',
+  active: false,
+  last_login: null,
+  ...usageBlock(500, 10000),
+};
+
+const ORG_ACCOUNT = {
+  type: 'organization',
+  id: '7d1e0000-2222-4ccc-8ddd-000000000001',
+  name: 'Acme',
+  plan: 'prompts_200',
+  plan_name: '200 prompts ($140/mo)',
+  seat_limit_source: 'plan',
+  seat_limit: 5,
+  seats_used: 2,
+  pending_invites: 1,
+  seats_available: 2,
+  over_limit: false,
+  owner: { id: OWNER_SEAT.user_id, email: OWNER_SEAT.email, full_name: OWNER_SEAT.full_name },
+  created_at: '2026-09-01T10:00:00+00:00',
+  ...usageBlock(4500, 100000, { month: '0.012000', all_time: '0.400000' }),
+  seats: [OWNER_SEAT, MEMBER_SEAT],
+};
+
+const SOLO_SEAT = {
+  user_id: '0b6c1f0e-1111-4aaa-8bbb-000000000003',
+  email: 'solo@example.com',
+  full_name: 'Sam Solo',
+  role: 'owner',
+  joined_via: 'individual',
+  joined_at: '2026-10-05T10:00:00+00:00',
+  active: true,
+  last_login: null,
+  ...usageBlock(1234, 56789),
+};
+const SOLO_ACCOUNT = {
+  type: 'individual',
+  id: SOLO_SEAT.user_id,
+  name: 'Sam Solo',
+  plan: 'prompts_100',
+  plan_name: '100 prompts ($80/mo)',
+  seat_limit_source: 'plan',
+  seat_limit: 1,
+  seats_used: 1,
+  pending_invites: 0,
+  seats_available: 0,
+  over_limit: false,
+  owner: { id: SOLO_SEAT.user_id, email: SOLO_SEAT.email, full_name: SOLO_SEAT.full_name },
+  created_at: '2026-10-05T10:00:00+00:00',
+  tokens: SOLO_SEAT.tokens,
+  cost_usd: SOLO_SEAT.cost_usd,
+  seats: [SOLO_SEAT],
+};
+
+const USER_ROW = {
+  id: OWNER_SEAT.user_id,
+  email: 'owner@acme.co',
+  full_name: 'Olive Owner',
+  plan: 'prompts_200',
+  plan_name: '200 prompts ($140/mo)',
+  plan_source: 'organization',
+  subscription_status: 'active',
+  projects: 2,
+  active: true,
+  verified: true,
+  joined: '2026-09-01T10:00:00+00:00',
+  last_login: '2026-11-07T09:00:00+00:00',
+  organization: { id: ORG_ACCOUNT.id, name: 'Acme', role: 'owner' },
+  prompts: 12,
+  audits: 4,
+  tokens_total: 90000,
+  ai_cost_usd: 0.3,
+  integrations: ['gsc'],
+  ...usageBlock(4000, 90000),
+};
+
+describe('backend admin API payloads', () => {
+  it('reads a users page row with nested month and all-time tokens', () => {
+    const page = normalizePage({ total: 1, limit: 50, offset: 0, period: PERIOD, rows: [USER_ROW] }, normalizeUser);
+    expect(page.period).toEqual(PERIOD);
+    expect(page.rows[0]).toMatchObject({
+      id: OWNER_SEAT.user_id,
+      email: 'owner@acme.co',
+      name: 'Olive Owner',
+      planLabel: '200 prompts ($140/mo)',
+      organization: { id: ORG_ACCOUNT.id, name: 'Acme' },
+      lastLogin: '2026-11-07T09:00:00+00:00',
+      tokensMonth: 4000,
+      tokensAllTime: 90000,
+    });
+  });
+
+  it('prefers the nested all-time total over the legacy tokens_total', () => {
+    const user = normalizeUser({ ...USER_ROW, tokens_total: 1 });
+    expect(user.tokensAllTime).toBe(90000);
+  });
+
+  it('reads an organization account with its seats list', () => {
+    const page = normalizePage(
+      { total: 2, organizations: 1, individual_accounts: 1, limit: 25, offset: 0, period: PERIOD, rows: [ORG_ACCOUNT, SOLO_ACCOUNT] },
+      normalizeAccount,
+    );
+    const [org, solo] = page.rows;
+    expect(org).toMatchObject({
+      id: ORG_ACCOUNT.id,
+      name: 'Acme',
+      kind: 'organization',
+      planLabel: '200 prompts ($140/mo)',
+      seatLimit: 5,
+      seatsUsed: 2,
+      pendingInvites: 1,
+      seatsAvailable: 2,
+      overLimit: false,
+      tokensMonth: 4500,
+      tokensAllTime: 100000,
+    });
+    expect(org.members).toHaveLength(2);
+    expect(org.members[0]).toMatchObject({
+      userId: OWNER_SEAT.user_id, email: 'owner@acme.co', name: 'Olive Owner', role: 'owner',
+      active: true, tokensMonth: 4000, tokensAllTime: 90000,
+    });
+    expect(org.members[1]).toMatchObject({
+      userId: MEMBER_SEAT.user_id, name: null, role: 'member', active: false, tokensMonth: 500, tokensAllTime: 10000,
+    });
+    expect(solo).toMatchObject({
+      kind: 'individual', planLabel: '100 prompts ($80/mo)', seatLimit: 1, seatsUsed: 1, seatsAvailable: 0,
+      tokensMonth: 1234, tokensAllTime: 56789,
+    });
+    expect(solo.members).toHaveLength(1);
+    expect(solo.members[0]).toMatchObject({ userId: SOLO_SEAT.user_id, tokensMonth: 1234, tokensAllTime: 56789 });
+  });
+
+  it('keeps unlimited seats as -1 and an empty seats list as no members', () => {
+    const account = normalizeAccount({ ...ORG_ACCOUNT, seat_limit: -1, seats_available: -1, seats_used: 0, seats: [] });
+    expect(account.seatLimit).toBe(-1);
+    expect(account.seatsAvailable).toBe(-1);
+    expect(account.members).toEqual([]);
+  });
+
+  it('builds the overview tiles from the totals block', () => {
+    const raw = {
+      users: { total: 3, new_7d: 1, new_30d: 2, verified: 3 },
+      subscriptions: { active: 2, trialing: 0, past_due: 0, canceled: 1 },
+      projects: { total: 4 },
+      audits: { total: 9, last_7d: 2 },
+      ai_usage: { tokens_30d: 999999, cost_30d_usd: 9.99 },
+      totals: {
+        period: PERIOD,
+        users: 3,
+        organizations: 1,
+        individual_accounts: 1,
+        accounts: 2,
+        seats_used: 3,
+        pending_invites: 1,
+        ...usageBlock(5734, 156789, { month: '0.012345', all_time: '0.400000' }),
+        unattributed: usageBlock(66, 700),
+      },
+      generated_at: '2026-11-08T12:00:00+00:00',
+    };
+    const byKey = Object.fromEntries(overviewTiles(raw).map((t) => [t.key, t]));
+    expect(byKey.users.value).toBe(3);
+    expect(byKey.accounts.value).toBe(2);
+    expect(byKey.orgs.value).toBe(1);
+    expect(byKey.individual.value).toBe(1);
+    expect(byKey.seats.value).toBe(3);
+    expect(byKey.pending_invites.value).toBe(1);
+    expect(byKey.tokens).toMatchObject({ label: 'Tokens this month (UTC)', value: 5734, format: 'count' });
+    expect(byKey.cost).toMatchObject({ label: 'AI cost this month (UTC)', value: 0.012345, format: 'usd' });
+    expect(byKey.tokens_all.value).toBe(156789);
+    expect(byKey.cost_all.value).toBe(0.4);
+    expect(byKey.unattributed.value).toBe(66);
+    expect(overviewPeriod(raw)).toEqual(PERIOD);
+  });
+});
 
 describe('normalizeUser', () => {
   it('reads the current backend directory row', () => {
@@ -124,6 +330,7 @@ describe('overviewTiles', () => {
     expect(byKey.past_due.value).toBe(0);
     expect(byKey.orgs).toBeUndefined();
     expect(byKey.tokens_all).toBeUndefined();
+    expect(overviewPeriod({})).toBeNull();
   });
 
   it('uses month figures when the backend sends them', () => {

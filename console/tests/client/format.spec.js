@@ -38,5 +38,8 @@ describe('format', () => {
     expect(periodLabel(null, new Date('2026-11-30T23:30:00-05:00'))).toBe('This month (UTC): December 2026');
     expect(periodLabel({ start: '2026-10-01T00:00:00Z', end: '2026-11-01T00:00:00Z' }, new Date('2026-11-08T00:00:00Z')))
       .toBe('This month (UTC): October 2026');
+    // The backend's own period block.
+    expect(periodLabel({ month_start: '2026-10-01T00:00:00+00:00', as_of: '2026-10-31T23:59:00+00:00' }, new Date('2026-12-08T00:00:00Z')))
+      .toBe('This month (UTC): October 2026');
   });
 });

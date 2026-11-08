@@ -6,6 +6,7 @@ import argon2 from 'argon2';
 import request from 'supertest';
 
 import { createApp } from '../../server/app.js';
+import { createAuthenticator } from '../../server/auth.js';
 import { loadConfig } from '../../server/config.js';
 
 export const OPERATOR = 'ops@example.com';
@@ -13,9 +14,14 @@ export const PASSWORD = 'correct horse battery staple';
 export const ORIGIN = 'https://console.example.com';
 export const ADMIN_KEY = 'backend-admin-key-for-tests';
 
+// Real argon2id at a low cost, so the rate-limit tests (dozens of
+// verifications each) stay fast. The production default cost is covered
+// by auth.test.js and hashPassword.test.js.
+export const TEST_HASH_OPTIONS = { memoryCost: 1024, timeCost: 1, parallelism: 1 };
+
 let hashPromise;
 export function operatorHash() {
-  hashPromise ||= argon2.hash(PASSWORD, { type: argon2.argon2id });
+  hashPromise ||= argon2.hash(PASSWORD, { ...TEST_HASH_OPTIONS, type: argon2.argon2id });
   return hashPromise;
 }
 
@@ -60,8 +66,9 @@ export async function makeApp({ env = {}, backend = fakeBackend(), now = fakeClo
   const config = loadConfig(await makeEnv(env));
   const events = [];
   const audit = (event, fields = {}) => events.push({ event, ...fields });
+  const authenticate = createAuthenticator(config.operators, { dummyHashOptions: TEST_HASH_OPTIONS });
   const { app } = createApp(config, {
-    audit, now, fetchImpl: backend.fetchImpl, staticDir: staticDir || '/nonexistent-console-dist',
+    audit, now, authenticate, fetchImpl: backend.fetchImpl, staticDir: staticDir || '/nonexistent-console-dist',
   });
   return { app, config, events, backend, now };
 }
