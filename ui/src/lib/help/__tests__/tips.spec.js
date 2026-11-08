@@ -20,10 +20,16 @@ describe('help copy', () => {
     }
   })
 
-  it('says research skips engines that are not configured (the swarm plans them as not asked)', () => {
+  it('says the engine choice of the last onboarding step applies to the first research only', () => {
     expect(TIPS.onboarding.engines).toBe(
-      'Engines listed as not configured have no access set up on this workspace yet, so research skips them.',
+      'Pick the AI engines your first research asks. An engine that is not set up on this workspace cannot be picked. Later checks ask every engine that is set up.',
     )
+  })
+
+  it('explains a prompt run without a number or a dollar', () => {
+    expect(TIPS.onboarding.promptRuns).toContain('One prompt run is one prompt answered by one AI engine.')
+    expect(TIPS.onboarding.promptRuns).toContain('shared by all your projects and engines')
+    expect(TIPS.onboarding.promptRuns).not.toMatch(/\$|\d/)
   })
 
   it('never says Ask AI answers feed Prompt ranking', () => {

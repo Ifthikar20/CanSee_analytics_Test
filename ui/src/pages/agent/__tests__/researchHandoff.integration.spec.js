@@ -294,6 +294,9 @@ describe('first research: onboarding to the agent chat', () => {
     flow.form.value.audience = 'Operations leads at growing companies'
     await flow.loadAgentStatus()
     expect(flow.availability.value).toBe('available')
+    // Every configured engine starts ticked; the user keeps ChatGPT only.
+    expect(flow.form.value.engines).toEqual(['chatgpt', 'claude'])
+    expect(flow.setEngineSelected('claude', false)).toBe(true)
 
     await flow.startResearch()
     await flushPromises()
@@ -304,6 +307,7 @@ describe('first research: onboarding to the agent chat', () => {
       '2. notion alternatives for startups',
       'Search from United States (us).',
       'Competitors to compare: Evernote (evernote.com).',
+      'Ask only these AI engines: ChatGPT.',
     ].join('\n')
     const save = client.post.mock.calls.find(([url]) => url === '/onboarding/save/')
     expect(save[1]).toMatchObject({
@@ -323,7 +327,8 @@ describe('first research: onboarding to the agent chat', () => {
     expect(agentApi.createChat).toHaveBeenCalledWith(WID, { entry_agent: 'gap_analyst' }, { _silentError: true })
     const [wid, cid, body, options] = agentApi.sendMessage.mock.calls[0]
     expect([wid, cid]).toEqual([WID, NEW_CHAT_ID])
-    expect(body).toMatchObject({ text, agent: 'gap_analyst' })
+    // The chosen engines travel with the first message, as public keys.
+    expect(body).toEqual({ text, agent: 'gap_analyst', engines: ['chatgpt'] })
     expect(options.idempotencyKey).toEqual(expect.any(String))
     expect(ctx.router.currentRoute.value).toMatchObject({ name: 'agent-chat', params: { websiteId: WID, chatId: NEW_CHAT_ID } })
     expect(ctx.router.currentRoute.value.query).toEqual({})

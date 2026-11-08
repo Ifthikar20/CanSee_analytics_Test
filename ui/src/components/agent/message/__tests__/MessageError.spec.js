@@ -54,6 +54,33 @@ describe('errorCopy', () => {
     expect(copy.retry).toBe(retryable)
   })
 
+  it('says why free prompt runs refused a reply, in the server words, with no retry', () => {
+    const exhausted = errorCopy(
+      'prompt_runs_exhausted',
+      "  You have used this month's 20 free prompt runs. They renew on November 30. ",
+      'failed',
+    )
+    expect(exhausted).toMatchObject({
+      code: 'prompt_runs_exhausted',
+      title: "This month's free prompt runs are used up.",
+      body: "You have used this month's 20 free prompt runs. They renew on November 30.",
+      retry: false,
+      billing: true,
+    })
+    expect(exhausted).not.toHaveProperty('useMessage')
+    const short = errorCopy('insufficient_prompt_runs', 'This needs 6 free prompt runs and 4 of your 20 are left this month.', 'failed')
+    expect(short).toMatchObject({ title: 'Not enough free prompt runs are left.', retry: false })
+    expect(short.body).toBe('This needs 6 free prompt runs and 4 of your 20 are left this month.')
+    // No server text: the title alone, never a dollar amount.
+    expect(errorCopy('insufficient_prompt_runs', '', 'failed').body).toBe('')
+  })
+
+  it('keeps its own body for other known codes, whatever the server says', () => {
+    expect(errorCopy('allowance_exceeded', 'Server text.', 'failed').body).toBe('Upgrade your plan or wait for the allowance to reset.')
+    // A known code without a body of its own stays without one.
+    expect(errorCopy('agent_disabled', 'Server text.', 'failed').body).toBe('')
+  })
+
   it('offers a new chat when the chat is too long', () => {
     expect(errorCopy('context_too_long', '', 'failed')).toMatchObject({ retry: false, newChat: true })
   })

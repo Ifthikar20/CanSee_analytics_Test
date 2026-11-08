@@ -85,6 +85,34 @@ const STATUS = {
   swarm: { enabled: true, max_agents: 30, worker_model: 'claude-haiku-5-5' },
 }
 
+// A free account (GET agent/status/ after be-quota): runs, not dollars.
+const FREE_RUNS = {
+  unlimited: false,
+  limit: 20,
+  used: 7,
+  reserved: 0,
+  remaining: 13,
+  plan: 'free',
+  scope: 'account',
+  period_start: '2026-11-01T00:00:00+00:00',
+  resets_at: '2026-11-30T23:59:59+00:00',
+  by_engine: {},
+  by_feature: {},
+}
+const FREE_STATUS = {
+  ...STATUS,
+  engines: [
+    { key: 'chatgpt', provider: 'gpt4', label: 'ChatGPT', configured: true, key_setting: '', reason: '' },
+    { key: 'claude', provider: 'claude', label: 'Claude', configured: true, key_setting: '', reason: '' },
+    { key: 'gemini', provider: 'gemini', label: 'Gemini', configured: false, key_setting: '', reason: 'not_configured' },
+  ],
+  google: { configured: true, provider: 'serpapi', label: 'SerpAPI', key_settings: [], reliable_pages: 3 },
+  allowance: { cap_usd: 3, spent_usd: 0.4, exceeded: false, warning: false, show_usd: false },
+  prompt_runs: FREE_RUNS,
+  research: { available: true, reason: null, message: '' },
+  setup: { ready: true, issues: [] },
+}
+
 const mounted = []
 
 function host(child = null, onComplete = vi.fn()) {
@@ -124,6 +152,20 @@ async function atRunStep({ status = STATUS, child = null, scan = {} } = {}) {
   await flushPromises()
   post.mockReset()
   return ctx
+}
+
+/** The engine checkboxes on the last step, as the user sees them. */
+function engineBoxes(wrapper) {
+  return wrapper.findAll('.ob-engine').map((row) => {
+    const box = row.find('input[type="checkbox"]')
+    const describedBy = box.attributes('aria-describedby')
+    return {
+      label: row.find('.ob-engine-label').text(),
+      checked: box.element.checked,
+      disabled: box.element.disabled,
+      why: describedBy ? document.getElementById(describedBy)?.textContent.trim() || '' : '',
+    }
+  })
 }
 
 function finishMocks({ entries = 0, suggested = 0 } = {}) {
@@ -187,7 +229,18 @@ describe('onboarding: website and scan', () => {
     expect(form.prompts).toHaveLength(6)
     expect(form.location).toBe('us')
     expect(form.logo_url).toBe('')
-    expect(form.scan).toEqual({ products: 3, topics: 6, competitors: 6, audience: false, topics_source: 'ai', missing_keys: [] })
+    // An older scan payload: no sources, no Google block.
+    expect(form.scan).toEqual({
+      products: 3,
+      topics: 6,
+      competitors: 6,
+      audience: false,
+      topics_source: 'ai',
+      competitors_source: '',
+      missing_keys: [],
+      google: null,
+    })
+    expect(form.competitors.every((c) => c.source === '' && c.evidence === null)).toBe(true)
 
     // The rows resolve from the data; the brand step follows a moment later.
     expect(flow.scanState.value).toBe('resolved')
@@ -373,7 +426,7 @@ describe('onboarding: review steps', () => {
     flow.newCompetitorDomain.value = 'slite.com'
     expect(flow.addCompetitor()).toBe(true)
     const slite = flow.form.value.competitors.at(-1)
-    expect(slite).toEqual({ name: 'Slite', domain: 'slite.com', selected: false, custom: true })
+    expect(slite).toEqual({ name: 'Slite', domain: 'slite.com', source: '', evidence: null, selected: false, custom: true })
     // Without a domain, the name decides.
     flow.newCompetitorName.value = 'slite'
     expect(flow.addCompetitor()).toBe(false)
@@ -401,7 +454,13 @@ describe('onboarding: review steps', () => {
 
     flow.newPrompt.value = '  which   tool replaces confluence  '
     expect(flow.addPrompt()).toBe(true)
-    expect(flow.form.value.prompts.at(-1)).toEqual({ text: 'which tool replaces confluence', selected: true, custom: true })
+    expect(flow.form.value.prompts.at(-1)).toEqual({
+      text: 'which tool replaces confluence',
+      source: '',
+      evidence: null,
+      selected: true,
+      custom: true,
+    })
     expect(flow.promptCapReached.value).toBe(true)
 
     expect(flow.setPromptSelected(4, true)).toBe(false)
@@ -543,7 +602,7 @@ describe('onboarding: review steps', () => {
     flow.goTo(3)
     await nextTick()
     expect(wrapper.find('.ob-empty-note').text()).toBe(
-      "Drafting prompts needs the AI service, which isn't configured here. Write 1 to 5 questions your buyers ask.",
+      "Suggesting questions needs Google search or the AI service, and neither is set up here. Write 1 to 5 questions your buyers ask.",
     )
     const select = wrapper.find('#ob-prompt-location')
     expect(select.findAll('option').map((o) => [o.attributes('value'), o.text()])).toEqual([
@@ -570,7 +629,7 @@ describe('onboarding: review steps', () => {
     flow.form.value.scan.topics_source = 'failed'
     await nextTick()
     expect(wrapper.find('.ob-empty-note').text()).toBe(
-      "We couldn't draft prompts from your homepage. Write 1 to 5 questions your buyers ask.",
+      "We couldn't suggest questions for your homepage. Write 1 to 5 questions your buyers ask.",
     )
   })
 
@@ -675,6 +734,7 @@ describe('onboarding: first research', () => {
         '3. how to organize team documentation',
         'Search from United Kingdom (gb).',
         'Competitors to compare: Evernote (evernote.com), Coda (coda.io), Confluence (atlassian.com), Obsidian (obsidian.md), ClickUp (clickup.com).',
+        'Ask only these AI engines: ChatGPT, Claude.',
       ].join('\n'),
     )
     expect(auth.fetchSession).toHaveBeenCalled()
@@ -790,9 +850,10 @@ describe('onboarding: first research', () => {
     const { flow, onComplete } = await atRunStep()
     finishMocks()
     await flow.skipResearch()
+    // The scan asks only the engines picked on the last step.
     expect(post).toHaveBeenCalledWith(
       '/prompt-library/websites/w1/prompts/',
-      { text: SCAN.topics.slice(0, 3).join('\n'), location: 'gb' },
+      { text: SCAN.topics.slice(0, 3).join('\n'), location: 'gb', engines: ['chatgpt', 'claude'] },
       { _silentError: true },
     )
     expect(useFirstResearch().peek('w1')).toBeNull()
@@ -832,11 +893,23 @@ describe('onboarding: first research', () => {
     )
     expect(rows.Website).toBe('notion.so')
     expect(rows.Brand).toBe('Notion')
-    expect(rows.Competitors).toBe('Evernote, Coda, Confluence, Obsidian, ClickUp')
+    expect(wrapper.findAll('.ob-summary-plain li').map((li) => li.text())).toEqual([
+      'Evernote',
+      'Coda',
+      'Confluence',
+      'Obsidian',
+      'ClickUp',
+    ])
     expect(wrapper.findAll('.ob-summary-list li').map((li) => li.text())).toEqual(SCAN.topics.slice(0, 3))
     expect(rows['Google results']).toBe('Available')
-    expect(rows['AI engines']).toBe('ChatGPT, Claude Not configured: Gemini')
+    expect(engineBoxes(wrapper)).toEqual([
+      { label: 'ChatGPT', checked: true, disabled: false, why: '' },
+      { label: 'Claude', checked: true, disabled: false, why: '' },
+      { label: 'Gemini', checked: false, disabled: true, why: "Gemini isn't set up on this workspace." },
+    ])
+    // A paid account with no runs block keeps its dollar allowance.
     expect(rows['AI allowance']).toBe('$7.50 of $10.00 left this month')
+    expect(rows['Prompt runs']).toBeUndefined()
     const buttons = wrapper.findAll('.ob-step-actions button').map((b) => b.text())
     expect(buttons).toEqual(['Back', 'Skip for now', 'Start research'])
     expect(wrapper.find('.ob-run-note').text()).toBe('You can run research any time from the Agent.')
@@ -915,21 +988,24 @@ describe('onboarding help tips', () => {
     expect(prompts.wrapper.find('label .cs-helptip').exists()).toBe(false)
   })
 
-  it('says research skips engines that are not configured, only when one is missing', async () => {
+  it('explains the engine choice and the allowance, never in dollars', async () => {
     const { wrapper } = await atRunStep({ child: RunStep })
     const found = tips(wrapper)
-    expect(found['About engines that are not configured']).toBe(
-      'Engines listed as not configured have no access set up on this workspace yet, so research skips them.',
+    expect(found['About choosing AI engines']).toBe(
+      'Pick the AI engines your first research asks. An engine that is not set up on this workspace cannot be picked. Later checks ask every engine that is set up.',
     )
     // The allowance tip never speaks in dollars.
     expect(found['About the AI allowance']).toContain('AI allowance')
     expect(found['About the AI allowance']).not.toContain('$')
+    expect(found['About free prompt runs']).toBeUndefined()
+  })
 
-    mounted.pop().unmount()
-    const all = await atRunStep({
-      child: RunStep,
-      status: { ...STATUS, engines: STATUS.engines.map((e) => ({ ...e, configured: true })) },
-    })
-    expect(tips(all.wrapper)['About engines that are not configured']).toBeUndefined()
+  it('explains free prompt runs to a free account', async () => {
+    const { wrapper } = await atRunStep({ child: RunStep, status: FREE_STATUS })
+    const found = tips(wrapper)
+    expect(found['About free prompt runs']).toBe(
+      'One prompt run is one prompt answered by one AI engine. Free prompt runs are shared by all your projects and engines, and renew each month.',
+    )
+    expect(found['About the AI allowance']).toBeUndefined()
   })
 })

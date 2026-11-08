@@ -404,6 +404,41 @@ describe('agent store: a research turn end to end', () => {
         expect(store.visiblePath(CHAT_ID).map((m) => m.id)).toEqual([USER_MESSAGE_ID, ASSISTANT_ID])
     })
 
+    it('sends the engines chosen at onboarding with the message, and again on retry', async () => {
+        await initProject()
+        agentApi.createChat.mockResolvedValueOnce(ok(chatDetail()))
+        agentApi.sendMessage.mockRejectedValueOnce(axiosError(502, {}))
+        const engines = ['claude', 'chatgpt']
+        await store.send({ chatId: null, text: 'Research Turonote', agent: 'gap_analyst', engines })
+        await flush()
+        // The store keeps its own copy: a later change to the caller's list is not sent.
+        engines.push('grok')
+        expect(agentApi.sendMessage.mock.calls[0][2]).toEqual({
+            text: 'Research Turonote',
+            parent_id: undefined,
+            agent: 'gap_analyst',
+            engines: ['claude', 'chatgpt'],
+        })
+
+        const [failed] = store.visiblePath(CHAT_ID)
+        agentApi.sendMessage.mockResolvedValueOnce(accepted())
+        await store.retrySend(failed.id)
+        expect(agentApi.sendMessage.mock.calls[1][2].engines).toEqual(['claude', 'chatgpt'])
+    })
+
+    it.each([
+        ['no engines', undefined],
+        ['an empty list', []],
+        ['a non-list', 'chatgpt'],
+    ])('sends no engines key for %s', async (_, engines) => {
+        await initProject()
+        agentApi.getChat.mockResolvedValueOnce(ok(chatDetail()))
+        agentApi.sendMessage.mockImplementationOnce(() => new Promise(() => {}))
+        await store.send({ chatId: CHAT_ID, text: 'Hello', engines })
+        const body = agentApi.sendMessage.mock.calls[0][2]
+        expect(body.engines).toBeUndefined()
+    })
+
     it('editing a failed send posts the new text with a new Idempotency-Key', async () => {
         await initProject()
         agentApi.getChat.mockResolvedValueOnce(ok(chatDetail()))

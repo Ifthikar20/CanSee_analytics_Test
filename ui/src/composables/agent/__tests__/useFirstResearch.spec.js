@@ -27,7 +27,34 @@ describe('useFirstResearch', () => {
     vi.setSystemTime(new Date('2026-11-04T10:00:00Z'))
     const { stash } = useFirstResearch()
     expect(stash({ websiteId: 'w1', text: `  ${TEXT}\n` })).toBe(true)
-    expect(stored()).toEqual({ websiteId: 'w1', text: TEXT, createdAt: Date.parse('2026-11-04T10:00:00Z') })
+    expect(stored()).toEqual({ websiteId: 'w1', text: TEXT, createdAt: Date.parse('2026-11-04T10:00:00Z'), engines: null })
+  })
+
+  it('keeps the engines chosen at onboarding, known keys only, deduped and in order', () => {
+    const { stash, peek, take } = useFirstResearch()
+    expect(stash({ websiteId: 'w1', text: TEXT, engines: ['claude', 'chatgpt', 'claude', 'bing', 7] })).toBe(true)
+    expect(stored().engines).toEqual(['claude', 'chatgpt'])
+    expect(peek('w1').engines).toEqual(['claude', 'chatgpt'])
+    expect(take('w1').engines).toEqual(['claude', 'chatgpt'])
+  })
+
+  it.each([
+    ['no engines', undefined],
+    ['an empty list', []],
+    ['only unknown keys', ['bing']],
+    ['a string', 'chatgpt'],
+  ])('stores null engines for %s', (_, engines) => {
+    const { stash, peek } = useFirstResearch()
+    stash({ websiteId: 'w1', text: TEXT, engines })
+    expect(peek('w1').engines).toBeNull()
+  })
+
+  it('reads an entry stored before engines existed, or with tampered engines, as null engines', () => {
+    const createdAt = Date.now()
+    sessionStorage.setItem(FIRST_RESEARCH_KEY, JSON.stringify({ websiteId: 'w1', text: TEXT, createdAt }))
+    expect(useFirstResearch().peek('w1')).toEqual({ websiteId: 'w1', text: TEXT, createdAt, engines: null })
+    sessionStorage.setItem(FIRST_RESEARCH_KEY, JSON.stringify({ websiteId: 'w1', text: TEXT, createdAt, engines: { a: 1 } }))
+    expect(useFirstResearch().peek('w1').engines).toBeNull()
   })
 
   it('refuses an entry without a project or a message', () => {
