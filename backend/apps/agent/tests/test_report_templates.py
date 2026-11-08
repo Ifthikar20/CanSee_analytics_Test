@@ -312,7 +312,7 @@ def test_the_edit_endpoint_takes_a_template(fake_anthropic, chat, website, user)
 def test_the_orchestrator_prompt_lets_the_note_replace_the_outline():
     from apps.agent.prompts import orchestrator
 
-    assert orchestrator.VERSION == "2026-11-08.1"
+    assert orchestrator.VERSION == "2026-11-08.3"
     assert ("# Report templates\nWhen a system message says the user chose a report template "
             "for a message, its outline replaces the report outlines below for that reply"
             ) in orchestrator.SYSTEM_PROMPT

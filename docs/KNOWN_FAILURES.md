@@ -1,36 +1,20 @@
 # Known failing backend tests
 
-Run on 2026-11-07: this repository at the commit that adds this file,
-against CanSee_analytics_App `feature/November-26` at `d658e55`, one app
-at a time with `scripts/run-backend-tests.sh`. That run had 6 failures, each
-pointing at a real backend bug.
+None. Run on 2026-11-08: this repository at the commit that changes this
+file, against CanSee_analytics_App `feature/November-26` at `7886e9a`
+(wave 1 merged), one app at a time with `scripts/run-backend-tests.sh`:
+4605 passed, 0 failed, 1 skipped. The UI suite against
+Cansee_analytics_UI_APP `feature/November-26` at `b6c9615`: 2821 passed.
 
-All six are fixed on the backend branch `w1/be-correct` (response envelope
-pagination check, event log CSV export, dotless website hosts, truncated
-JSON repair, the geo tagger "generation" rule, Plackett-Luce strengths for
-brands never compared).
-
-Run on 2026-11-08 against `feature/November-26` at `f43e144` plus
-`w1/be-correct`: every app passes except the four tests below. They began
-failing with `f43e144` ("Serve the prerendered blog pages from nginx"),
-not with the fixes above.
-
-These are not backend bugs: `f43e144` added a `location ^~ /blog` block
-that serves the prerendered blog shells and deliberately repeats the
-`/index.html` nonce, no-cache and security headers. The tests still expect
-exactly two SPA locations and one nonce source, so they need updating to
-check the blog block the same way (every server header repeated, its own
-nonce). Do not skip, xfail or loosen them; update them, then remove the
-entry here.
-
-| Test | Cause | Where |
-| --- | --- | --- |
-| `apps/agent/tests/test_fix_be_platform_infra.py::test_spa_locations_repeat_every_server_security_header[nginx.prod.conf]` and `[nginx.http.conf]` | The set of SPA locations now includes `^~ /blog`. | `docker/nginx/nginx.prod.conf`, `docker/nginx/nginx.http.conf` |
-| `apps/agent/tests/test_fix_be_platform_infra.py::test_the_spa_document_nonces_its_own_inline_scripts[nginx.prod.conf]` and `[nginx.http.conf]` | `'nonce-$request_id'` now appears twice (`/index.html` and `/blog`). | `docker/nginx/nginx.prod.conf`, `docker/nginx/nginx.http.conf` |
+The six backend bugs this file used to list (response envelope pagination,
+event log CSV export, dotless website hosts, truncated JSON repair, the geo
+tagger "generation" rule, Plackett-Luce strengths for brands never
+compared) are fixed. The four nginx tests the blog location broke now
+cover that location instead.
 
 When a test fails because of a backend bug, leave it failing on purpose and
 list it here: fix the app code, then remove the entry. Do not skip, xfail or
-loosen these tests to get a green run.
+loosen tests to get a green run.
 
 ## How the suite got here
 
