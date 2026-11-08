@@ -269,6 +269,7 @@ def test_detail_reports_the_active_run(api, website, tree):
     body = data(api.get(chats_url(website, tree["chat"])))
     assert body["active_run"] == {
         "id": str(run.id), "status": "running", "message_id": str(reply.id), "last_seq": 5,
+        "queue": None,
     }
 
 
@@ -455,4 +456,5 @@ def test_run_serializer_matches_the_contract(tree):
     assert RunSerializer(run).data == {
         "id": str(run.id), "chat_id": str(tree["chat"].id),
         "message_id": str(tree["a1b"].id), "status": "queued", "last_seq": 3,
+        "queue": None,
     }

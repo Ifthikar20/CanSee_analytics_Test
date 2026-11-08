@@ -107,7 +107,8 @@ def test_spent_allowance_is_a_403_before_any_request(api, fake_anthropic, chat, 
     assert fake_anthropic.requests == []
 
 
-def test_concurrency_limits(api, fake_anthropic, chat, user, website):
+def test_concurrency_limits(api, fake_anthropic, chat, user, website, settings):
+    settings.AGENT_USER_ACTIVE_RUNS = 1
     busy = _queued_run(chat)
     resp = api.post(_send_url(chat), {"text": "Hi"}, format="json")
     assert resp.status_code == 409
@@ -345,13 +346,13 @@ def test_long_poll_returns_events_unenveloped(api, fake_anthropic, chat):
     run = send(chat, "Hi").run
 
     body = api.get(_events_url(run.id, after=0, wait=0)).json()
-    assert set(body) == {"events", "next_after", "terminal", "run_status"}
+    assert set(body) == {"events", "next_after", "terminal", "run_status", "queue"}
     assert body["terminal"] is True and body["run_status"] == "completed"
     assert body["next_after"] == body["events"][-1]["seq"]
 
     rest = api.get(_events_url(run.id, after=body["next_after"], wait=0)).json()
     assert rest == {"events": [], "next_after": body["next_after"], "terminal": True,
-                    "run_status": "completed"}
+                    "run_status": "completed", "queue": None}
 
 
 def test_long_poll_waits_for_the_next_event(api, chat):

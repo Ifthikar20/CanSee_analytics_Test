@@ -222,7 +222,7 @@ def check_swarm_events(events: list[dict], *, version: int, task_ids: list[str],
         full["swarm_id"], version, "running")
     assert full["started_at"] and full["ended_at"] is None and full["duration_ms"] is None
     assert (full["table_version"], full["error"]) == (None, None)
-    assert full["limits"] == {"max_tasks": 30, "workers": 6}
+    assert full["limits"] == {"max_tasks": 50, "workers": 8}
     assert [t["id"] for t in full["tasks"]] == task_ids
     for task in full["tasks"]:
         contract.assert_task(task)
@@ -644,7 +644,7 @@ def test_a_research_runs_end_to_end(user, website, chat, research):
         assert shown["parts"] == stored.parts and shown["research"] == stored.research
         assert shown["parts_seq"] == stored.parts_seq
     status = data(owner.get(reverse("agent-status")))
-    assert status["swarm"] == {"enabled": True, "max_agents": 30,
+    assert status["swarm"] == {"enabled": True, "max_agents": 50,
                                "worker_model": "claude-haiku-5-5"}
 
 

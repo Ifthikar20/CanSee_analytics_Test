@@ -14,7 +14,7 @@ from apps.agent.tools import registry
 DEFINITION = json.loads(r"""
 {
   "name": "research_swarm",
-  "description": "Run the research agents: a team of up to 30 agents that work in parallel on 1 to 5 buyer prompts, each doing one real step: fetching one Google results page, asking one AI engine one prompt, reading one competitor page or the brand's own page, or analyzing content gaps or cited sources. The user sees every agent's status live. Returns one consolidated table: per prompt the Google position, the AI Overview, each engine's mention and rank, the brands ahead, the cited sources and the gap class, plus the content gaps and the cited sources. Agents per prompt = Google pages + engines asked + competitor pages + 2 when content_gaps is on + 1 when citations is on; at most 30 in total. Pass rerun_of with an earlier result's swarm_id, and nothing else, to run the same research again with fresh data. Google pages and engine answers cost money and use the project's allowances.",
+  "description": "Run the research agents: a team of up to 50 agents that work in parallel on 1 to 5 buyer prompts, each doing one real step: fetching one Google results page, asking one AI engine one prompt, reading one competitor page or the brand's own page, or analyzing content gaps or cited sources. The user sees every agent's status live. Returns one consolidated table: per prompt the Google position, the AI Overview, each engine's mention and rank, the brands ahead, the cited sources and the gap class, plus the content gaps and the cited sources. Agents per prompt = Google pages + engines asked + competitor pages + 2 when content_gaps is on + 1 when citations is on; at most 50 in total. Pass rerun_of with an earlier result's swarm_id, and nothing else, to run the same research again with fresh data. Google pages and engine answers cost money and use the project's allowances.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -59,9 +59,9 @@ tracked when the research starts). If there are none, propose 3 to 5 buyer-inten
 the user to confirm, and run the research after they say yes.
 2. Plan. Use the defaults (google_pages 1, competitor_pages 1, every configured engine, \
 content_gaps and citations on) unless the user asked for more depth. Put competitors the user \
-named in competitors. A research has at most 30 agents: each prompt adds its Google pages, the \
+named in competitors. A research has at most 50 agents: each prompt adds its Google pages, the \
 engines asked, its competitor pages, and 3 more with content_gaps and citations on, so with all \
-five engines configured use at most 3 prompts. If the result says the plan is too large or the \
+five engines configured use at most 5 prompts. If the result says the plan is too large or the \
 allowance is short, make the plan smaller and call it once more.
 3. Report. The app shows the agents and the results table above your reply, and a saved report \
 includes that table, so do not repeat the full table. Write the report from the tool result: a \
@@ -79,7 +79,7 @@ check_ai_engines or inspect_page for the same prompts in the same turn.
 
 
 def test_the_prompt_version_is_bumped():
-    assert orchestrator.VERSION == "2026-11-05.1"
+    assert orchestrator.VERSION == "2026-11-08.2"
 
 
 def test_the_research_agents_section_follows_the_ground_rules():
@@ -111,7 +111,7 @@ def test_research_swarm_is_offered_only_while_enabled(settings):
     enabled = get_or_create_snapshot()
     names = [t["name"] for t in json.loads(enabled.tools_json)]
     assert "research_swarm" in names and names == sorted(names)
-    assert enabled.version == "2026-11-05.1"
+    assert enabled.version == "2026-11-08.2"
 
     settings.AGENT_SWARM_ENABLED = False
     disabled = get_or_create_snapshot()

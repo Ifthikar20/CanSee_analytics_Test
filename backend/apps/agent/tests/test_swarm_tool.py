@@ -317,6 +317,7 @@ def test_refusals_close_the_planning_part(chat, configured, executor, settings, 
                    'dentists". List the prompts in your reply and ask the user to confirm '
                    "them; call track_prompts after they say yes.")
 
+    settings.AGENT_SWARM_MAX_TASKS = 30
     others = [make_prompt(website, f"{PROMPT} {n}") for n in range(2, 6)]
     five = plan_input(prompts=[{"prompt_id": str(p.prompt_id)} for p in [bp, *others]])
     assert_refused(tool_context(chat), five, "too_many_agents",
