@@ -115,6 +115,44 @@ def test_a_crawl_in_flight_refuses_a_second(api, website, keys, queued):
     queued.assert_not_called()
 
 
+def test_a_second_click_before_the_worker_starts_is_refused(api, website, keys, queued):
+    prompt = _prompt(website=website)
+    first = api.post(_crawl_url(website, prompt), {}, format="json")
+    assert first.status_code == 200
+    # The task is only queued: no worker has created anything yet.
+    run = PromptCrawlRun.objects.get(website=website, prompt=prompt)
+    assert run.status == PromptCrawlRun.STATUS_PENDING
+    assert queued.call_args.kwargs["crawl_run_id"] == str(run.id)
+
+    second = api.post(_crawl_url(website, prompt), {}, format="json")
+    assert second.status_code == 409
+    assert _error(second)["error"] == "crawl_in_progress"
+    assert queued.call_count == 1
+    assert PromptCrawlRun.objects.filter(website=website, prompt=prompt).count() == 1
+
+
+def test_a_refused_check_now_holds_no_slot(api, user, website, keys, queued):
+    prompt = _prompt(website=website)
+    use_runs(user, 20, website)
+    assert api.post(_crawl_url(website, prompt), {}, format="json").status_code == 403
+    assert not PromptCrawlRun.objects.filter(website=website, prompt=prompt).exists()
+
+
+def test_a_task_whose_project_is_gone_frees_its_slot(website):
+    import uuid
+
+    from apps.prompt_library.tasks import crawl_prompt_for_website
+
+    prompt = _prompt(website=website)
+    run = PromptCrawlRun.objects.create(website=website, prompt=prompt,
+                                        status=PromptCrawlRun.STATUS_PENDING)
+    result = crawl_prompt_for_website.run(str(website.id), str(uuid.uuid4()),
+                                          crawl_run_id=str(run.id))
+    assert result["ok"] is False
+    run.refresh_from_db()
+    assert run.status == PromptCrawlRun.STATUS_FAILED
+
+
 def test_a_crawl_left_running_past_the_stale_window_does_not_block(api, website, keys, queued):
     prompt = _prompt(website=website)
     run = PromptCrawlRun.objects.create(website=website, prompt=prompt,

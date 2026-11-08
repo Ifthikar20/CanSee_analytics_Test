@@ -173,6 +173,67 @@ def test_check_now_counts_each_engine_and_stops_at_the_limit(user, website, engi
     assert set(PromptRun.objects.values_list("feature", flat=True)) == {"prompt_crawl"}
 
 
+def test_the_prompt_page_shows_an_engine_left_unasked_as_skipped(user, website, engines):
+    from rest_framework.test import APIClient
+
+    prompt = _prompt(website)
+    use_runs(user, 19, website)
+    prompt_crawler.crawl_prompt(website, prompt, acting_user=user)
+    client = APIClient()
+    client.force_authenticate(user)
+    resp = client.get(f"/api/v1/prompt-library/websites/{website.id}/prompts/{prompt.id}/detail/")
+    assert resp.status_code == 200, resp.content
+    chats = {c["provider"]: c for c in resp.json()["data"]["recent_chats"]}
+    assert (chats["gpt4"]["status"], chats["gpt4"]["error"]) == ("complete", "")
+    # Never asked, so it did not fail to respond.
+    assert chats["claude"]["status"] == "skipped"
+    assert chats["claude"]["error"] == "This month's free prompt runs are used up."
+
+
+def test_the_prompt_page_says_when_the_runs_could_not_be_checked(user, website):
+    from rest_framework.test import APIClient
+
+    from apps.llm_ranking.tests.factories import LLMRankingResultFactory
+
+    prompt = _prompt(website)
+    LLMRankingResultFactory(
+        audit__website=website, provider="claude", prompt=prompt.text, source_prompt=prompt,
+        response_text="", query_succeeded=False, error_message=prompt_runs.CHECK_FAILED,
+    )
+    client = APIClient()
+    client.force_authenticate(user)
+    resp = client.get(f"/api/v1/prompt-library/websites/{website.id}/prompts/{prompt.id}/detail/")
+    (chat,) = resp.json()["data"]["recent_chats"]
+    assert chat["status"] == "failed"
+    assert chat["error"] == "The prompt runs could not be checked, so this model was not asked."
+
+
+def test_a_crawl_reuses_the_run_check_now_reserved(user, website, engines):
+    from apps.prompt_library.models import PromptCrawlRun
+
+    prompt = _prompt(website)
+    reserved = PromptCrawlRun.objects.create(website=website, prompt=prompt,
+                                             status=PromptCrawlRun.STATUS_PENDING)
+    prompt_crawler.crawl_prompt(website, prompt, acting_user=user, crawl_run_id=reserved.id)
+    reserved.refresh_from_db()
+    assert PromptCrawlRun.objects.filter(website=website, prompt=prompt).count() == 1
+    assert reserved.status == PromptCrawlRun.STATUS_COMPLETE
+    assert reserved.started_at is not None and reserved.completed_at is not None
+
+
+def test_a_reserved_run_that_timed_out_is_not_reused(user, website, engines):
+    from apps.prompt_library.models import PromptCrawlRun
+
+    prompt = _prompt(website)
+    stale = PromptCrawlRun.objects.create(website=website, prompt=prompt,
+                                          status=PromptCrawlRun.STATUS_FAILED)
+    prompt_crawler.crawl_prompt(website, prompt, acting_user=user, crawl_run_id=stale.id)
+    stale.refresh_from_db()
+    assert stale.status == PromptCrawlRun.STATUS_FAILED
+    assert PromptCrawlRun.objects.filter(
+        website=website, prompt=prompt, status=PromptCrawlRun.STATUS_COMPLETE).count() == 1
+
+
 def test_a_scheduled_crawl_counts_on_the_owner(user, website, engines):
     prompt = _prompt(website)
     prompt_crawler.crawl_prompt(website, prompt)
