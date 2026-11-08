@@ -260,6 +260,16 @@ describe('run words', () => {
         ).toBe('Used 4 Google pages (about 100 ScraperAPI credits).')
     })
 
+    it('says what a run used without dollars on the Free plan', () => {
+        const hideUsd = { hideUsd: true }
+        expect(costLine(finishedRun(), hideUsd)).toBe('Used 4 Google pages (about 100 ScraperAPI credits).')
+        expect(
+            costLine(finishedRun({ provider: 'serpapi', cost: { google_pages_fetched: 1, scraperapi_credits: null, google_usd: '0.0150', ai_usd: '0.0060' } }), hideUsd),
+        ).toBe('Used 1 Google page.')
+        // Engines only: nothing in dollars to say.
+        expect(costLine(finishedRun({ include_google: false }), hideUsd)).toBe('')
+    })
+
     it('formats money and durations', () => {
         expect(money('0.4000')).toBe('$0.40')
         expect(money('0.0060')).toBe('$0.0060')

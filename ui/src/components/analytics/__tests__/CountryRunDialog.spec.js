@@ -292,3 +292,59 @@ describe('CountryRunDialog', () => {
     expect(runButton().text()).toBe('Run for up to $0.22')
   })
 })
+
+describe('CountryRunDialog on the Free plan', () => {
+  const runs = (over = {}) => ({ needed: 8, remaining: 13, limit: 20, unlimited: false, enough: true, resets_at: '2026-11-30T23:59:59+00:00', ...over })
+
+  it('shows free prompt runs instead of dollars, even for SerpAPI', async () => {
+    countriesApi.estimate.mockResolvedValue(
+      ok(
+        countryEstimate({
+          google: { ...countryEstimate().google, provider: 'serpapi', provider_label: 'SerpAPI', credits_max: 0, usd_max: '0.0600' },
+          prompt_runs: runs(),
+        }),
+      ),
+    )
+    await openDialog()
+    await pick('United Kingdom')
+    await settle()
+    const text = body().find('.crd-estimate').text()
+    expect(text).toContain('Google: up to 4 results pages.')
+    expect(text).toContain('AI engines: 8 answers. Uses 8 of your 13 free prompt runs left.')
+    expect(runButton().text()).toBe('Run for 8 free prompt runs')
+    expect(body().find('.crd-estimate').text()).not.toContain('$')
+    expect(runButton().text()).not.toContain('$')
+  })
+
+  it('leaves the shortfall to the blocker and keeps ScraperAPI credits', async () => {
+    countriesApi.estimate.mockResolvedValue(
+      ok(
+        countryEstimate({
+          prompt_runs: runs({ remaining: 4, enough: false }),
+          blockers: [{ code: 'insufficient_prompt_runs', message: 'This needs 8 free prompt runs and 4 of your 20 are left this month. Choose fewer prompts or engines.' }],
+          can_run: false,
+        }),
+      ),
+    )
+    await openDialog()
+    await pick('United Kingdom')
+    await settle()
+    const text = body().text()
+    expect(text).toContain('Google: up to 4 results pages, about 100 ScraperAPI credits.')
+    expect(text).toContain('AI engines: 8 answers.')
+    expect(text).not.toContain('Uses 8 of your')
+    expect(text).toContain('This needs 8 free prompt runs and 4 of your 20 are left this month.')
+    expect(runButton().attributes('disabled')).toBeDefined()
+  })
+
+  it('keeps dollars for a paid account whose runs are unlimited', async () => {
+    countriesApi.estimate.mockResolvedValue(
+      ok(countryEstimate({ prompt_runs: runs({ unlimited: true, remaining: null, limit: null, resets_at: null }) })),
+    )
+    await openDialog()
+    await pick('United Kingdom')
+    await settle()
+    expect(body().find('.crd-estimate').text()).toContain('AI engines: 8 answers, up to $0.16 of your AI allowance ($4.08 left this month).')
+    expect(runButton().text()).toBe('Run for up to $0.16 and 100 credits')
+  })
+})

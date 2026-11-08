@@ -55,12 +55,12 @@ function overview(plan, extra = {}) {
     }
 }
 
-async function render({ query = {}, current = overview(null), plansFail = false } = {}) {
+async function render({ query = {}, current = overview(null), plansFail = false, limits = { projects: 1 } } = {}) {
     const pinia = createPinia()
     setActivePinia(pinia)
     const auth = useAuthStore()
     auth.accessToken = 'token'
-    auth.session = { subscription: { source: 'user' }, limits: { projects: 1 } }
+    auth.session = { subscription: { source: 'user' }, limits }
     vi.spyOn(auth, 'fetchSession').mockResolvedValue(null)
     billing.getCurrent.mockResolvedValue({ data: current })
     if (plansFail) billing.getPlans.mockRejectedValue(new Error('500'))
@@ -249,5 +249,30 @@ describe('BillingPage: the cycle switch', () => {
 
         const hundred = await render({ current: overview('prompts_100') })
         expect(hundred.wrapper.findAll('button').some((b) => /Switch to (annual|monthly) billing/.test(b.text()))).toBe(false)
+    })
+})
+
+describe('BillingPage: the Free plan in prompt runs', () => {
+    const runs = { unlimited: false, limit: 20, used: 7, reserved: 0, remaining: 13, resets_at: '2026-11-30T23:59:59+00:00' }
+
+    it('states the free prompt runs and what is left, never dollars', async () => {
+        const { wrapper } = await render({ limits: { projects: 1, prompt_runs: runs } })
+        expect(wrapper.find('.bp-current-note').text().replace(/\s+/g, ' ')).toBe(
+            "The Free plan doesn't expire. It includes 1 project and 20 prompt runs a month. 13 free prompt runs left this month.",
+        )
+    })
+
+    it('says none are left when they are used up', async () => {
+        const { wrapper } = await render({ limits: { prompt_runs: { ...runs, used: 20, remaining: 0 } } })
+        expect(wrapper.find('.bp-current-note').text().replace(/\s+/g, ' ')).toBe(
+            "The Free plan doesn't expire. It includes 20 prompt runs a month. No free prompt runs left this month.",
+        )
+    })
+
+    it('keeps the old words when the session has no runs block', async () => {
+        const { wrapper } = await render()
+        expect(wrapper.find('.bp-current-note').text().replace(/\s+/g, ' ')).toBe(
+            "The Free plan doesn't expire. It includes 1 project and a small monthly AI allowance.",
+        )
     })
 })

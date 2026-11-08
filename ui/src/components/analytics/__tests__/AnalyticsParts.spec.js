@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
 import MethodChip from '../MethodChip.vue'
 import PeriodSelect from '../PeriodSelect.vue'
 import PromptSelect from '../PromptSelect.vue'
@@ -140,6 +142,19 @@ describe('RecentRuns', () => {
     )
     expect(items[1].find('.rr-status').text()).toBe('Stopped')
     expect(items[1].find('.rr-by').text()).toBe('By Site Owner')
+  })
+
+  it('shows the Free plan no dollars, and no cost at all for an engines-only check', () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().session = { limits: { prompt_runs: { unlimited: false, limit: 20, used: 3, reserved: 0, remaining: 17 } } }
+    const runs = [finishedRun({ id: 'r2' }), finishedRun({ id: 'r3', include_google: false })]
+    const wrapper = track(mount(RecentRuns, { props: { runs }, global: { plugins: [pinia] } }))
+    const items = wrapper.findAll('.rr-item')
+    expect(items[0].find('.rr-cost').text()).toBe('Used 4 Google pages (about 100 ScraperAPI credits).')
+    expect(items[1].find('.rr-cost').exists()).toBe(false)
+    expect(items[1].find('.rr-sep').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('$')
   })
 
   it('says when there is nothing yet', () => {

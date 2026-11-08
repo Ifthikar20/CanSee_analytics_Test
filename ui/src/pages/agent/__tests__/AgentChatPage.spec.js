@@ -337,6 +337,22 @@ describe('AgentChatPage ?from= (Ask the agent)', () => {
     )
   })
 
+  it('shows a free account its prompt runs instead of dollars', async () => {
+    resetStores({
+      status: {
+        ...STATUS,
+        allowance: { ...STATUS.allowance, show_usd: false },
+        prompt_runs: { unlimited: false, limit: 20, used: 7, reserved: 0, remaining: 13 },
+        writers: { page_optimizer: { available: false, needs_usd: '0.45' } },
+      },
+    })
+    await setup('/projects/w1/agent?agent=page_optimizer&from=pages')
+    expect(notice().querySelector('.ag-drafted-limits').textContent).toBe(
+      "13 free prompt runs left this month. Needs more of this month's free AI allowance than is left."
+    )
+    expect(notice().textContent).not.toContain('$')
+  })
+
   it('shows the first line alone until the agent status has loaded', async () => {
     resetStores({ status: null })
     await setup('/projects/w1/agent?from=fact-check')

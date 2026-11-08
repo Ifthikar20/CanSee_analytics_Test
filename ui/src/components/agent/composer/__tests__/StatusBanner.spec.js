@@ -85,6 +85,48 @@ describe('StatusBanner', () => {
     })
   })
 
+  describe('the AI allowance and free prompt runs', () => {
+    const FREE_RUNS = { unlimited: false, limit: 20, used: 20, reserved: 0, remaining: 0, resets_at: '2026-11-30T23:59:59+00:00' }
+    const paid = { cap_usd: 30, spent_usd: 30, exceeded: true, warning: true, show_usd: true }
+
+    it('keeps the dollars for a paid account', () => {
+      const w = mountBanner({ code: 'allowance_exceeded', allowance: paid })
+      expect(w.text()).toContain("You've used your AI allowance for this period.")
+      expect(w.text()).toContain('$30.00 of $30.00 used.')
+    })
+
+    it('never shows a free account dollars, whether show_usd or the runs block says it is free', () => {
+      for (const props of [
+        { allowance: { cap_usd: 3, spent_usd: 3, exceeded: true, show_usd: false } },
+        { allowance: { cap_usd: 3, spent_usd: 3, exceeded: true }, status: { prompt_runs: FREE_RUNS } },
+      ]) {
+        const w = mountBanner({ code: 'allowance_exceeded', ...props })
+        expect(w.find('.ag-banner-title').text()).toBe("This month's free AI allowance is used up.")
+        expect(w.text()).toContain('It renews next month.')
+        expect(w.text()).not.toContain('$')
+        w.unmount()
+      }
+      const warn = mountBanner({ code: 'allowance_warning', allowance: { cap_usd: 3, spent_usd: 2.6, warning: true, show_usd: false } })
+      expect(warn.find('.ag-banner-title').text()).toBe("You are close to this month's free AI allowance.")
+      expect(warn.text()).not.toContain('$')
+    })
+
+    it('says the free prompt runs are used up and when they renew, with a link to plans', () => {
+      const w = mountBanner({ code: 'prompt_runs_exhausted', status: { prompt_runs: FREE_RUNS } })
+      expect(w.find('.ag-banner-title').text()).toBe("You have used this month's 20 free prompt runs.")
+      expect(w.find('.ag-banner-body').text()).toBe(
+        "The agent still answers, but it can't ask the AI engines until they renew on November 30.",
+      )
+      expect(w.findComponent({ name: 'RouterLink' }).exists()).toBe(true)
+    })
+
+    it('words used-up runs plainly when the block is missing', () => {
+      const w = mountBanner({ code: 'prompt_runs_exhausted', status: {} })
+      expect(w.find('.ag-banner-title').text()).toBe("This month's free prompt runs are used up.")
+      expect(w.find('.ag-banner-body').text()).toBe("The agent still answers, but it can't ask the AI engines until they renew.")
+    })
+  })
+
   it('shows nothing without a code', () => {
     expect(mountBanner({ code: '' }).find('.ag-banner').exists()).toBe(false)
   })

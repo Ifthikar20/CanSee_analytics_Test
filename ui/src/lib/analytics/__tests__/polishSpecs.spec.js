@@ -272,4 +272,19 @@ describe('aiUsageSpec', () => {
         expect(representationsFor(spec)).toEqual(['bar', 'line', 'table'])
         expect([0, 1].map((j) => pointText(spec, 0, j))).toEqual(['$0.01', '$0.42'])
     })
+
+    it('counts AI requests instead of dollars for a free account', () => {
+        const spec = norm(
+            aiUsageSpec(
+                [
+                    { day: '2026-11-01', calls: 4, tokens: 1200, cost: 0.0123 },
+                    { day: '2026-11-02', calls: 9, tokens: 5100, cost: 0.42 },
+                ],
+                { subtitle: 'Nov 1 – Nov 30', metric: 'calls' }
+            )
+        )
+        expect(spec).toMatchObject({ id: 'settings.ai_usage', value: 'count' })
+        expect(spec.datasets.map((d) => d.label)).toEqual(['AI requests'])
+        expect([0, 1].map((j) => pointText(spec, 0, j))).toEqual(['4', '9'])
+    })
 })

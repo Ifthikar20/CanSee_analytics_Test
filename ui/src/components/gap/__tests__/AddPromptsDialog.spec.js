@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
 
 const client = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }))
@@ -18,7 +20,14 @@ const mounted = []
 const body = () => new DOMWrapper(document.body)
 const button = (label) => body().findAll('button').find((b) => b.text() === label)
 
-async function render(props = {}) {
+async function render(props = {}, { session = null } = {}) {
+  const plugins = []
+  if (session) {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().session = session
+    plugins.push(pinia)
+  }
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -29,7 +38,7 @@ async function render(props = {}) {
   await router.push('/')
   const wrapper = mount(AddPromptsDialog, {
     props: { websiteId: 'w1', open: true, ...props },
-    global: { plugins: [router] },
+    global: { plugins: [router, ...plugins] },
     attachTo: document.body,
   })
   mounted.push(wrapper)
@@ -256,5 +265,59 @@ describe('AddPromptsDialog', () => {
     await type('best crm')
     expect(body().find('.apd-notice').exists()).toBe(false)
     expect(button('Add 1 prompt')).toBeTruthy()
+  })
+})
+
+describe('AddPromptsDialog on the Free plan', () => {
+  const runs = (over = {}) => ({ unlimited: false, limit: 20, used: 7, reserved: 0, remaining: 13, resets_at: '2026-11-30T23:59:59+00:00', ...over })
+  const free = (over) => ({ session: { limits: { prompt_runs: runs(over) } } })
+
+  it('says how many free prompt runs adding uses, never the AI allowance', async () => {
+    await render({ engineCount: 2 }, free())
+    await type('best crm\ncrm for startups\ncrm with gmail')
+    expect(body().find('.apd-cost').text()).toBe(
+      'Adding 3 prompts asks 6 AI answers now (2 engines). Uses 6 of your 13 free prompt runs left. Google is checked when you choose Check Google, and nothing runs again unless you set a schedule.',
+    )
+    expect(body().find('.apd-cost').text()).not.toContain('allowance')
+  })
+
+  it('says when more runs are needed than are left, and that the prompts are still added', async () => {
+    await render({ engineCount: 2 }, free({ used: 16, remaining: 4 }))
+    await type('best crm\ncrm for startups\ncrm with gmail')
+    expect(body().find('.apd-cost').text()).toContain(
+      'This needs 6 free prompt runs and 4 of your 20 are left this month. Choose fewer prompts or engines. The prompts are still added, but the engines are not asked now.',
+    )
+  })
+
+  it('words the unknown engine count in runs', async () => {
+    await render({}, free())
+    expect(body().find('.apd-cost').text()).toBe('Adding prompts asks each connected AI engine now, one free prompt run per answer.')
+  })
+
+  it('warns, with the server words, when the prompts were added but not asked', async () => {
+    client.post.mockResolvedValue({
+      data: {
+        created_count: 1,
+        scan_audit_id: null,
+        scan_error: { error: 'prompt_runs_exhausted', message: "You have used this month's 20 free prompt runs. They renew on November 30." },
+      },
+    })
+    const { wrapper } = await render({ engineCount: 2 }, free({ used: 20, remaining: 0 }))
+    await type('best crm for a small team')
+    await button('Add 1 prompt').trigger('click')
+    await flushPromises()
+    expect(toast.warning).toHaveBeenCalledWith("Added 1 prompt. You have used this month's 20 free prompt runs. They renew on November 30.")
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(wrapper.emitted('added')).toHaveLength(1)
+  })
+
+  it('reports other scan errors as before', async () => {
+    client.post.mockResolvedValue({ data: { created_count: 1, scan_audit_id: null, scan_error: { error: 'scan_not_started' } } })
+    await render({ engineCount: 2 }, free())
+    await type('best crm for a small team')
+    await button('Add 1 prompt').trigger('click')
+    await flushPromises()
+    expect(toast.success).toHaveBeenCalledWith('Added 1 prompt.')
+    expect(toast.warning).not.toHaveBeenCalled()
   })
 })

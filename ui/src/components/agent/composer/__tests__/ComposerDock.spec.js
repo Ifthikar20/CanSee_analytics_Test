@@ -63,4 +63,33 @@ describe('ComposerDock status banner', () => {
     const w = mountDock()
     expect(w.find('.ag-banner').exists()).toBe(false)
   })
+
+  it('says the free prompt runs are used up without blocking a send', () => {
+    fakeAgent.status = {
+      enabled: true,
+      configured: true,
+      live_available: true,
+      allowance: { cap_usd: 3, spent_usd: 1, exceeded: false, warning: true, show_usd: false },
+      prompt_runs: { unlimited: false, limit: 20, used: 20, reserved: 0, remaining: 0, resets_at: '2026-11-30T23:59:59+00:00' },
+    }
+    const w = mountDock()
+    // Used-up runs come before the allowance warning.
+    expect(w.find('.ag-banner-title').text()).toBe("You have used this month's 20 free prompt runs.")
+    expect(w.findComponent(Composer).props('blocked')).toBe(false)
+  })
+
+  it('shows no runs banner while some are left, or for a paid account', async () => {
+    fakeAgent.status = {
+      enabled: true,
+      configured: true,
+      live_available: true,
+      allowance: { exceeded: false, warning: false },
+      prompt_runs: { unlimited: false, limit: 20, used: 19, reserved: 0, remaining: 1 },
+    }
+    const w = mountDock()
+    expect(w.find('.ag-banner').exists()).toBe(false)
+    fakeAgent.status = { ...fakeAgent.status, prompt_runs: { unlimited: true, limit: null, remaining: null } }
+    await w.vm.$nextTick()
+    expect(w.find('.ag-banner').exists()).toBe(false)
+  })
 })

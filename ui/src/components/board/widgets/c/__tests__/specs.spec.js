@@ -76,6 +76,20 @@ describe('the estimate line', () => {
         expect(estimateLine(null)).toBe('')
     })
 
+    it('shows a free account its prompt runs, never dollars', () => {
+        const runs = { needed: 6, remaining: 13, limit: 20, unlimited: false, enough: true, resets_at: '2026-11-30T23:59:59+00:00' }
+        expect(estimateLine(estimatePayload({ prompt_runs: runs }))).toBe('6 answers. Uses 6 of your 13 free prompt runs left.')
+        expect(estimateLine(estimatePayload({ answers: 1, prompt_runs: { ...runs, needed: 1 } }))).toBe(
+            '1 answer. Uses 1 of your 13 free prompt runs left.',
+        )
+        // Too few left: the blocker says so; the line only counts the answers.
+        expect(estimateLine(estimatePayload({ prompt_runs: { ...runs, remaining: 4, enough: false } }))).toBe('6 answers.')
+        // A paid account (unlimited runs) keeps its dollars.
+        expect(estimateLine(estimatePayload({ prompt_runs: { ...runs, unlimited: true, remaining: null, limit: null } }))).toBe(
+            '6 answers, up to $0.48 of your AI allowance ($2.24 left this month).',
+        )
+    })
+
     it('rounds an upper bound up to the cent and a cost to the nearest cent', () => {
         expect(usdUpTo('0.4800')).toBe('$0.48')
         expect(usdUpTo('0.0700')).toBe('$0.07')
@@ -162,6 +176,7 @@ describe('a run on the card', () => {
 describe('a run in the panel', () => {
     it('says when it was asked, how many times per engine and what it cost', () => {
         expect(askedLine(runPayload({ created_at: new Date().toISOString() }))).toBe('Asked just now, 3 per engine, AI $0.07')
+        expect(askedLine(runPayload({ created_at: new Date().toISOString() }), { hideUsd: true })).toBe('Asked just now, 3 per engine')
     })
 
     it('reads every answer in words', () => {

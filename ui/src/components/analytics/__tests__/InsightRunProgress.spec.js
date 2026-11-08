@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
 import { flushPromises, mount } from '@vue/test-utils'
 import InsightRunProgress from '../InsightRunProgress.vue'
 import { run } from '@/composables/analytics/__tests__/__fixtures__/insightRuns'
@@ -125,5 +127,39 @@ describe('InsightRunProgress', () => {
   it('shows why a stop failed', () => {
     const wrapper = setup({ run: run(), stopError: "We couldn't stop this run. Try again." })
     expect(wrapper.find('[role="alert"]').text()).toBe("We couldn't stop this run. Try again.")
+  })
+})
+
+describe('InsightRunProgress on the Free plan', () => {
+  function free() {
+    setActivePinia(createPinia())
+    useAuthStore().session = { limits: { prompt_runs: { unlimited: false, limit: 20, used: 3, reserved: 0, remaining: 17 } } }
+  }
+  const done = (cost) =>
+    run({
+      kind: 'prompt_research',
+      kind_label: 'Prompt research',
+      status: 'done',
+      duration_ms: 9000,
+      progress: { total: 3, queued: 0, running: 0, done: 3, failed: 0, skipped: 0, cancelled: 0 },
+      cost,
+    })
+
+  it('says what was used without dollars', () => {
+    free()
+    let wrapper = setup({ run: done({ ai_usd: '0.0019', google_pages: 2, scraperapi_credits: 50 }) })
+    expect(wrapper.text()).toContain('Used 2 Google pages (about 50 ScraperAPI credits).')
+    expect(wrapper.text()).not.toContain('$')
+    wrapper = setup({ run: done({ ai_usd: '0.0400', google_pages: 0, scraperapi_credits: null }) })
+    expect(wrapper.text()).toContain("Used some of this month's free AI allowance.")
+    wrapper = setup({ run: done({ ai_usd: '0.0000', google_pages: 0 }) })
+    expect(wrapper.text()).toContain('Nothing was billed.')
+  })
+
+  it('keeps dollars for a paid session', () => {
+    setActivePinia(createPinia())
+    useAuthStore().session = { limits: { prompt_runs: { unlimited: true, limit: null, remaining: null } } }
+    const wrapper = setup({ run: done({ ai_usd: '0.0400', google_pages: 0 }) })
+    expect(wrapper.text()).toContain('Used $0.04 of AI allowance.')
   })
 })

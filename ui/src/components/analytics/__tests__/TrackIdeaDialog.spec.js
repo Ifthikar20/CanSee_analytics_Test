@@ -46,6 +46,29 @@ describe('TrackIdeaDialog', () => {
     expect(button('Cancel')).toBeTruthy()
   })
 
+  it('states the free prompt runs, never dollars, on the Free plan', async () => {
+    const track = {
+      ...promptIdeasPayload().track,
+      prompt_runs: { needed: 2, remaining: 13, limit: 20, unlimited: false, enough: true, resets_at: '2026-11-30T23:59:59+00:00' },
+    }
+    mountDialog({ track })
+    await flushPromises()
+    expect(body().text()).toContain(
+      'Cansee adds "is notion free for teams" to your tracked prompts and asks ChatGPT and Claude now. Uses 2 of your 13 free prompt runs left.',
+    )
+    expect(body().text()).not.toContain('$')
+  })
+
+  it('says when too few free prompt runs are left', async () => {
+    const track = {
+      ...promptIdeasPayload().track,
+      prompt_runs: { needed: 2, remaining: 0, limit: 20, unlimited: false, enough: false, resets_at: '2026-11-30T23:59:59+00:00' },
+    }
+    mountDialog({ track })
+    await flushPromises()
+    expect(body().text()).toContain("You have used this month's 20 free prompt runs. They renew on November 30.")
+  })
+
   it('leaves the allowance out when it is unlimited', async () => {
     const track = { ...promptIdeasPayload().track, allowance: { unlimited: true } }
     mountDialog({ track })

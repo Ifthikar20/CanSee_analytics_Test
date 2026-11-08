@@ -204,6 +204,20 @@ describe('AgentTaskDialog', () => {
     expect(askAgent.mock.calls[0][1].text).toBe('Write LinkedIn posts and an X thread that promote "Wiki guide" (artifact a9).')
   })
 
+  it('never shows a free account dollars', async () => {
+    const free = { ...STATUS, allowance: { ...STATUS.allowance, show_usd: false } }
+    await open('page_optimizer', { status: free })
+    expect(dialog().textContent).toContain("The Page Optimizer draws on this month's free AI allowance.")
+    expect(dialog().textContent).not.toContain('$')
+  })
+
+  it('says a free writer cannot start without dollars', async () => {
+    await open('pr_writer', { status: { ...STATUS, allowance: { ...STATUS.allowance, show_usd: false } } })
+    expect(dialog().textContent).toContain("Needs more of this month's free AI allowance than is left.")
+    expect(dialog().textContent).not.toContain('$')
+    expect(openButton().disabled).toBe(true)
+  })
+
   it('drafts correction requests for a contradicted claim, and says the writer cannot start', async () => {
     await open('pr_writer')
     expect(insightsApi.factCheck).toHaveBeenCalledWith('w1', { period: '90d', verdict: 'contradicted' })

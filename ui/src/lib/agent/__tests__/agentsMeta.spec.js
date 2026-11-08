@@ -42,6 +42,17 @@ describe('writerUnavailable', () => {
   })
 })
 
+describe('writerUnavailable on the Free plan', () => {
+  it('says the free AI allowance is short, never in dollars', () => {
+    const free = { ...status(), allowance: { cap_usd: 3, spent_usd: 2.9, show_usd: false } }
+    expect(writerUnavailable('landing_page', free)).toBe("Needs more of this month's free AI allowance than is left.")
+    const byRuns = { ...status(), prompt_runs: { unlimited: false, limit: 20, used: 1, reserved: 0, remaining: 19 } }
+    expect(writerUnavailable('landing_page', byRuns)).toBe("Needs more of this month's free AI allowance than is left.")
+    // A free writer that can start says nothing.
+    expect(writerUnavailable('ad_campaign', free)).toBe('')
+  })
+})
+
 describe('agentList', () => {
   it('marks each agent with why it cannot start, in catalog order', () => {
     const catalog = [

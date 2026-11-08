@@ -440,7 +440,7 @@ describe('PromptBoxCard help', () => {
         expect(wrapper.find('label.pb-times button').exists()).toBe(false)
         expect(wrapper.find('.pb-chips button.cs-helptip').exists()).toBe(false)
         const [times] = wrapper.findAll('button.cs-helptip')
-        expect(describedBy(times)).toContain('each answer counts toward your AI allowance')
+        expect(describedBy(times)).toContain('on the Free plan each answer uses one prompt run')
     })
 
     it('explains the estimate only while the line is an estimate', async () => {

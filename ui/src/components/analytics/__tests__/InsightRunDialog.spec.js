@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, h, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import { apiError, run, runEstimate, runOptions } from '@/composables/analytics/__tests__/__fixtures__/insightRuns'
 
 const api = vi.hoisted(() => ({
@@ -316,5 +317,62 @@ describe('InsightRunDialog', () => {
     await flushPromises()
     expect(dialog()).toBeNull()
     expect(ctx.open.value).toBe(false)
+  })
+})
+
+describe('InsightRunDialog on the Free plan', () => {
+  const RUNS = { needed: 4, remaining: 13, limit: 20, unlimited: false, enough: true, resets_at: '2026-11-30T23:59:59+00:00' }
+
+  it('answer analysis: AI work without dollars, and a plain Run label', async () => {
+    const estimate = runEstimate('answer_analysis', { prompt_runs: { ...RUNS, needed: 0 } })
+    const ctx = await setup('answer_analysis', { estimate, options: runOptions('answer_analysis') })
+    await openWith(ctx, {})
+    expect(lines()).toContain("AI: up to 80 requests, from this month's free AI allowance.")
+    expect(runButton().textContent.trim()).toBe('Run')
+    expect(lines().join(' ')).not.toContain('$')
+  })
+
+  it('SerpAPI searches without dollars', async () => {
+    const options = runOptions('fanout_google', {
+      configured: { ai: true, google: true, google_provider: 'serpapi', google_provider_label: 'SerpAPI', shopping: false },
+    })
+    const estimate = runEstimate('fanout_google', {
+      units: { queries: 3 },
+      ai: { calls_max: 0, usd_max: '0.0000' },
+      google: { pages_max: 3, credits_max: 0, usd_max: '0.0450', daily_left: 60, daily_limit: 60 },
+      confirm: { ai_calls: 0, ai_usd_max: '0.0000', google_pages: 3 },
+      prompt_runs: { ...RUNS, needed: 0 },
+    })
+    const ctx = await setup('fanout_google', { options, estimate })
+    await openWith(ctx, { queries: [{ prompt_id: 'p1', text: 'best note apps 2026' }] })
+    expect(lines()).toEqual(['3 searches, page one only.', '60 of 60 Google pages left today.'])
+    expect(runButton().textContent.trim()).toBe('Run')
+  })
+
+  it('shopping check: engine answers in free prompt runs, Google in credits', async () => {
+    const estimate = runEstimate('shopping_check', {
+      units: { pages: 2, answers: 4 },
+      ai: { calls_max: 4, usd_max: '0.3200' },
+      google: { pages_max: 2, credits_max: 50, usd_max: '0.0000', daily_left: 60, daily_limit: 60 },
+      confirm: { ai_calls: 4, ai_usd_max: '0.3200', google_pages: 2 },
+      prompt_runs: RUNS,
+    })
+    const extra = { products: [{ id: 'p1', name: 'Acme X200 running shoe' }], engines: [{ key: 'chatgpt', label: 'ChatGPT', configured: true }] }
+    const ctx = await setup('shopping_check', { estimate, extra, options: runOptions('shopping_check') })
+    await openWith(ctx, { product_ids: ['p1'], engines: ['chatgpt'], google_shopping: true })
+    expect(lines()).toEqual([
+      'Google Shopping: 2 pages, about 50 ScraperAPI credits.',
+      'AI engines: 4 answers. Uses 4 of your 13 free prompt runs left.',
+      '60 of 60 Google pages left today.',
+    ])
+    expect(runButton().textContent.trim()).toBe('Run for 50 credits')
+  })
+
+  it('takes the Free plan from the session when the estimate has no runs block', async () => {
+    const ctx = await setup('answer_analysis', { options: runOptions('answer_analysis') })
+    useAuthStore().session = { limits: { prompt_runs: { unlimited: false, limit: 20, used: 1, reserved: 0, remaining: 19 } } }
+    await openWith(ctx, {})
+    expect(lines()).toContain("AI: up to 80 requests, from this month's free AI allowance.")
+    expect(lines().join(' ')).not.toContain('$')
   })
 })
