@@ -103,6 +103,26 @@ def test_uncached_searches_are_rate_limited_per_user(client, page_text):
 
 
 @pytest.mark.django_db
+def test_pause_after_a_burst_allows_only_the_refilled_searches(client, page_text):
+    # The bucket refills one search every 180 s. A pause longer than the
+    # cache's old fixed 300 s timeout must not hand out a fresh burst of 5.
+    clock = [1_000_000.0]
+    capacity = PromptSearchSourcesView._BUCKET_CAPACITY
+    with patch("time.time", lambda: clock[0]), \
+            patch("requests.get", return_value=_serp_response()) as serp:
+        for i in range(capacity):
+            assert client.post(URL, {"query": f"{QUERY} burst {i}"},
+                               format="json").status_code == 200
+        clock[0] += 6 * 60
+        codes = [
+            client.post(URL, {"query": f"{QUERY} later {i}"}, format="json").status_code
+            for i in range(capacity)
+        ]
+    assert codes == [200, 200, 429, 429, 429]
+    assert serp.call_count == capacity + 2
+
+
+@pytest.mark.django_db
 def test_failed_search_is_not_cached(page_text):
     failed = MagicMock(status_code=503)
     with patch("requests.get", return_value=failed):
