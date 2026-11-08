@@ -184,12 +184,47 @@ describe('AnalyticsBoardPage', () => {
     expect(api.save).not.toHaveBeenCalled()
   })
 
+  it('points out Add widget after the earlier board tips, and holds it while the catalog is open', async () => {
+    localStorage.setItem('cs-hints-v1:7', JSON.stringify({ seen: ['board.ask-ai', 'shell.project'], skipped: false }))
+    api.get.mockResolvedValue(payload(DEFAULT, 4))
+    const { wrapper } = await setup()
+    await settle()
+    const hint = () => document.body.querySelector('.cs-hint[data-hint="board.add-widget"]')
+    expect(hint()).not.toBeNull()
+    expect(hint().querySelector('.cs-hint-title').textContent).toBe('Add more views')
+
+    await addButton(wrapper).trigger('click')
+    await settle()
+    expect(hint()).toBeNull()
+    // Not dismissed: closing the catalog brings it back.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await settle()
+    expect(document.body.querySelector('.ag-portal.ag-dialog')).toBeNull()
+    expect(hint()).not.toBeNull()
+  })
+
+  it('explains Add widget and the board options in their tooltips', async () => {
+    api.get.mockResolvedValue(payload(DEFAULT, 4))
+    const { wrapper } = await setup()
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    addButton(wrapper).element.focus()
+    await settle()
+    expect(document.body.querySelector('.ag-tooltip').textContent).toContain('Add more views to this board')
+    wrapper.find('button[aria-label="Board options"]').element.focus()
+    await settle()
+    expect(document.body.querySelector('.ag-tooltip').textContent).toContain(
+      'Reset board puts back Ask AI and Prompt ranking; your data is not touched.',
+    )
+  })
+
   it('says when the board is empty and offers Add widget', async () => {
     api.get.mockResolvedValue(payload([], 4))
     const { wrapper } = await setup()
     const empty = wrapper.find('.ag-empty')
     expect(empty.text()).toContain('Your board is empty.')
-    expect(empty.text()).toContain('Add a widget to start.')
+    expect(empty.text()).toContain(
+      'Widgets show how Google and the AI engines treat your brand. Start with Ask AI or Prompt ranking.',
+    )
     await empty.find('button').trigger('click')
     await flushPromises()
     const dialog = document.body.querySelector('.ag-portal.ag-dialog')

@@ -21,6 +21,7 @@ const { doneRun, estimatePayload, httpError, ok, overviewEngines, rankingPayload
 const { POLL_MS } = await import('../specs')
 const { resetPromptBoxNotes } = await import('../usePromptBoxRun')
 const { default: PromptBoxCard } = await import('../PromptBoxCard.vue')
+const { useAuthStore } = await import('@/stores/auth')
 
 const mounted = []
 
@@ -419,5 +420,66 @@ describe('PromptBoxCard', () => {
         expect(wrapper.find('.pb-error').text()).toBe('A question is already being asked for this project.')
         expect(promptBox.get).toHaveBeenCalledWith('w1', 'r-5')
         expect(wrapper.find('.pb-question').text()).toBe('best wiki for teams')
+    })
+})
+
+describe('PromptBoxCard help', () => {
+    const helpLabels = (wrapper) => wrapper.findAll('button.cs-helptip').map((b) => b.attributes('aria-label'))
+    const describedBy = (button) => document.getElementById(button.attributes('aria-describedby'))?.textContent
+    const signIn = () => {
+        const auth = useAuthStore()
+        auth.user = { id: 3 }
+        auth.session = { user: { id: 3 }, org: null, onboarding: { needs_onboarding: false } }
+    }
+    const hint = (key) => document.body.querySelector(`.cs-hint[data-hint="${key}"]`)
+
+    it('explains Times per engine and the engine picks, outside their label and group', async () => {
+        const { wrapper } = await render()
+        expect(helpLabels(wrapper)).toEqual(['About Times per engine', 'About picking engines'])
+        // Never inside the <label>: a button there would take the label from the select.
+        expect(wrapper.find('label.pb-times button').exists()).toBe(false)
+        expect(wrapper.find('.pb-chips button.cs-helptip').exists()).toBe(false)
+        const [times] = wrapper.findAll('button.cs-helptip')
+        expect(describedBy(times)).toContain('each answer counts toward your AI allowance')
+    })
+
+    it('explains the estimate only while the line is an estimate', async () => {
+        const { wrapper } = await render()
+        await type(wrapper, 'best crm for startups')
+        expect(helpLabels(wrapper)).toContain('About this estimate')
+        const tip = wrapper.findAll('button.cs-helptip').find((b) => b.attributes('aria-label') === 'About this estimate')
+        expect(describedBy(tip)).not.toContain('$')
+
+        promptBox.estimate.mockRejectedValue(httpError(404, 'not_found', 'Not found.'))
+        await type(wrapper, 'best crm for small startups')
+        expect(line(wrapper)).toBe('Only members of this project can ask.')
+        expect(helpLabels(wrapper)).not.toContain('About this estimate')
+    })
+
+    it('points Ask AI out on the first visit, but not when nothing can be asked', async () => {
+        const { wrapper } = await render()
+        signIn()
+        await flushPromises()
+        expect(hint('board.ask-ai').querySelector('.cs-hint-title').textContent).toBe('Start here')
+        wrapper.unmount()
+        mounted.length = 0
+
+        setSource('overview', { data: overviewEngines([]) })
+        await render()
+        signIn()
+        await flushPromises()
+        expect(hint('board.ask-ai')).toBeNull()
+    })
+
+    it('points Track this prompt out once the run has ended, after the Ask AI tip', async () => {
+        localStorage.setItem('cs-hints-v1:3', JSON.stringify({ seen: ['board.ask-ai'], skipped: false }))
+        const run = doneRun()
+        promptBox.get.mockResolvedValue(ok(run))
+        const { wrapper } = await render({ runs: [summaryOf(run)] })
+        signIn()
+        await flushPromises()
+        expect(hint('board.track')).not.toBeNull()
+        expect(helpLabels(wrapper)).toContain('About tracking this prompt')
+        localStorage.removeItem('cs-hints-v1:3')
     })
 })

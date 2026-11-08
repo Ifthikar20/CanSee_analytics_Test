@@ -399,3 +399,19 @@ describe('AppHeader controls', () => {
     expect(tools.map((b) => b.attributes('aria-label') || b.attributes('title'))).toEqual(['Help & feedback', 'Help'])
   })
 })
+
+describe('AppHeader help', () => {
+  it('says where each main link goes in its tooltip', async () => {
+    const { wrapper } = await setup()
+    const tipFor = async (index) => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+      navLinks(wrapper)[index].element.focus()
+      await flushPromises()
+      return document.body.querySelector('.ag-tooltip')?.textContent || ''
+    }
+    expect(navLinks(wrapper).map((a) => a.text())).toEqual(['Analytics', 'Agent', 'Settings'])
+    expect(await tipFor(0)).toContain('Your board')
+    expect(await tipFor(1)).toContain('Chat with the agent')
+    expect(await tipFor(2)).toContain('Autopilot, connections, brand facts')
+  })
+})

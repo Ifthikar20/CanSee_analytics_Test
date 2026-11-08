@@ -883,3 +883,53 @@ describe('onboarding: first research', () => {
     expect(ctx.flow.availability.value).toBe('available')
   })
 })
+
+describe('onboarding help tips', () => {
+  const tips = (wrapper) =>
+    Object.fromEntries(
+      wrapper.findAll('button.cs-helptip').map((b) => [
+        b.attributes('aria-label'),
+        document.getElementById(b.attributes('aria-describedby'))?.textContent || '',
+      ]),
+    )
+
+  it('explains offerings and buyers beside their labels, never inside a <label>', async () => {
+    const { wrapper } = await scanned(BrandStep)
+    const found = tips(wrapper)
+    expect(found['About offerings']).toContain('List what you sell, by name.')
+    expect(found['About who you sell to']).toContain('The agents write drafts for these readers.')
+    expect(wrapper.find('label .cs-helptip').exists()).toBe(false)
+    expect(wrapper.find('.ob-label-row .cs-helptip').exists()).toBe(true)
+  })
+
+  it('explains competitors, prompts and where Google is searched from', async () => {
+    const competitors = await scanned(CompetitorsStep)
+    expect(tips(competitors.wrapper)['About competitors']).toContain('Keep up to 5')
+    // Each test app numbers its ids from the start: one app at a time.
+    mounted.pop().unmount()
+
+    const prompts = await scanned(PromptsStep)
+    const found = tips(prompts.wrapper)
+    expect(found['What is a prompt?']).toContain('A prompt is a question a buyer types')
+    expect(found['About Search from']).toContain('The country Google results are checked from')
+    expect(prompts.wrapper.find('label .cs-helptip').exists()).toBe(false)
+  })
+
+  it('says research skips engines that are not configured, only when one is missing', async () => {
+    const { wrapper } = await atRunStep({ child: RunStep })
+    const found = tips(wrapper)
+    expect(found['About engines that are not configured']).toBe(
+      'Engines listed as not configured have no access set up on this workspace yet, so research skips them.',
+    )
+    // The allowance tip never speaks in dollars.
+    expect(found['About the AI allowance']).toContain('AI allowance')
+    expect(found['About the AI allowance']).not.toContain('$')
+
+    mounted.pop().unmount()
+    const all = await atRunStep({
+      child: RunStep,
+      status: { ...STATUS, engines: STATUS.engines.map((e) => ({ ...e, configured: true })) },
+    })
+    expect(tips(all.wrapper)['About engines that are not configured']).toBeUndefined()
+  })
+})

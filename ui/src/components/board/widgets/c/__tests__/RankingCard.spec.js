@@ -162,3 +162,41 @@ describe('RankingCard', () => {
         expect(wrapper.findAll('.bd-bars-row')).toHaveLength(1)
     })
 })
+
+describe('RankingCard help', () => {
+    const helpText = (wrapper, label) => {
+        const tip = wrapper.findAll('button.cs-helptip').find((b) => b.attributes('aria-label') === label)
+        return tip ? document.getElementById(tip.attributes('aria-describedby')).textContent : null
+    }
+
+    it('explains both lists beside their titles, without changing the titles', async () => {
+        setSource('ranking', { data: rankingPayload({ prompts: rankedRows(6) }) })
+        const { wrapper } = await render()
+        expect(lists(wrapper).map((l) => l.title)).toEqual(['Keep you visible', 'Weakest'])
+        expect(helpText(wrapper, 'About Keep you visible')).toContain('3/5 means named in 3 of 5 answers')
+        expect(helpText(wrapper, 'About Weakest')).toContain('names you least')
+        // The headings stay plain text; the help sits beside them.
+        expect(wrapper.find('h3 button').exists()).toBe(false)
+    })
+
+    it('says why prompts are not ranked yet, and that Ask AI answers do not count', async () => {
+        setSource('ranking', { data: rankingPayload({ prompts: [rankingRow('p-1', { ranked: false, rank: null, answers: 3 })] }) })
+        const { wrapper } = await render()
+        expect(wrapper.find('.rk-state-title').text()).toBe('Prompts are ranked once they have 4 answers in 7 days.')
+        expect(helpText(wrapper, 'Why prompts are not ranked yet')).toContain('Ask AI answers stay in Ask AI')
+
+        setSource('ranking', { data: rankingPayload({ prompts: [] }) })
+        await wrapper.vm.$nextTick()
+        expect(helpText(wrapper, 'Why prompts are not ranked yet')).toBeNull()
+    })
+
+    it('explains Autopilot only while it is off', async () => {
+        setSource('ranking', { data: rankingPayload({ autopilot: { enabled: false, last_run: null, next_run_at: null } }) })
+        const { wrapper } = await render()
+        expect(wrapper.find('.rk-lead').text()).toBe('Autopilot is off for this project. Turn it on')
+        expect(helpText(wrapper, 'About Autopilot')).toContain('once a day on its own')
+        setSource('ranking', { data: rankingPayload() })
+        await wrapper.vm.$nextTick()
+        expect(helpText(wrapper, 'About Autopilot')).toBeNull()
+    })
+})
