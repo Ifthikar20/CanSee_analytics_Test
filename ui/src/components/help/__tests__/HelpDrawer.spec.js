@@ -263,3 +263,38 @@ describe('HelpDrawer', () => {
     expect(scrolled).toHaveBeenCalled()
   })
 })
+
+describe('HelpDrawer: Show tips again', () => {
+  it('closes the drawer first, then shows every tip again from the first', async () => {
+    const { resetHints, useHintsStore } = await import('@/stores/hints')
+    const { useAuthStore } = await import('@/stores/auth')
+    localStorage.clear()
+    // Whether the drawer was still open when the tips were reset.
+    const openAtReset = []
+    let help
+    const resetTips = () => {
+      openAtReset.push(help.isOpen)
+      return resetHints()
+    }
+    ;({ help } = await setup('/projects/w1/analytics', { resetTips }))
+    const auth = useAuthStore()
+    auth.user = { id: 7 }
+    auth.session = { user: { id: 7 }, org: null, onboarding: { needs_onboarding: false } }
+    const hints = useHintsStore()
+    hints.register('board.ask-ai')
+    hints.dismiss('board.ask-ai')
+    hints.skipAll()
+    expect(hints.active).toBeNull()
+
+    await openDrawer(help)
+    footRow('Show tips again').click()
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(help.isOpen).toBe(false)
+    expect(openAtReset).toEqual([false])
+    expect(hints.skipped).toBe(false)
+    expect(hints.seen).toEqual([])
+    expect(hints.active).toBe('board.ask-ai')
+    localStorage.clear()
+  })
+})
