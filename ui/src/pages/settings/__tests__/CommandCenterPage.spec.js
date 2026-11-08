@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, h } from 'vue'
 import { RouterView, createMemoryHistory, createRouter } from 'vue-router'
 import { commandCenter, mineOnly } from '@/lib/analytics/__tests__/__fixtures__/commandCenter'
+import { useAuthStore } from '@/stores/auth'
 
 const agentApi = vi.hoisted(() => ({ commandCenter: vi.fn() }))
 vi.mock('@/api/agent', () => ({ default: agentApi }))
@@ -15,9 +16,10 @@ const mounted = []
 const ok = (data) => ({ success: true, data })
 const apiError = (status, code, message) => ({ response: { status, data: { error: { code, message } } }, displayMessage: message })
 
-async function mountPage(path = '/settings/usage-dashboard') {
+async function mountPage(path = '/settings/usage-dashboard', { session = null } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
+  if (session) useAuthStore().session = session
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -142,5 +144,56 @@ describe('CommandCenterPage', () => {
     await wrapper.find('.viz-state button').trigger('click')
     await flushPromises()
     expect(wrapper.findAll('.viz-stat')).toHaveLength(5)
+  })
+})
+
+describe('CommandCenterPage on the Free plan', () => {
+  const FREE = { limits: { prompt_runs: { unlimited: false, limit: 20, used: 4, reserved: 0, remaining: 16 } } }
+  const PAID = { limits: { prompt_runs: { unlimited: true, limit: null, used: 0, reserved: 0, remaining: null } } }
+  const specs = (wrapper) => charts(wrapper).map((c) => c.props('spec'))
+  const usesUsd = (spec) => spec.value === 'usd' || (spec.datasets || []).some((d) => d.value === 'usd')
+
+  it('shows a free account no dollars: requests in place of AI spend, and no spend column', async () => {
+    agentApi.commandCenter.mockResolvedValue(
+      ok(commandCenter({ spend_by_category: [{ key: 'writers', label: 'Writing agents', usd: '1.2000', requests: 4 }, { key: 'engines', label: 'AI engine answers', usd: '0.1200', requests: 6 }] })),
+    )
+    const { wrapper } = await mountPage('/settings/usage-dashboard', { session: FREE })
+    expect(wrapper.text()).not.toContain('$')
+    expect(wrapper.text()).not.toContain('AI spend')
+
+    const tiles = wrapper.findAll('.viz-stat')
+    expect(tiles.map((t) => t.find('.viz-stat-label').text())).toEqual(['Agent runs', 'Active users', 'Drafts saved', 'AI requests', 'Failed runs'])
+    expect(tiles[3].text()).toContain('10')
+
+    expect(chartIds(wrapper)).toEqual(['command.runs', 'command.users', 'command.teams', 'command.requests', 'command.agents'])
+    expect(specs(wrapper).filter(usesUsd)).toEqual([])
+
+    const users = wrapper.find('.cc-users')
+    expect(users.findAll('thead th').map((t) => t.text())).toEqual(['Name', 'Role', 'Runs', 'Active days', 'Last active'])
+    expect(users.findAll('tbody tr')[0].findAll('td')).toHaveLength(4)
+  })
+
+  it('shows a free account in its own scope no dollars either', async () => {
+    agentApi.commandCenter.mockResolvedValue(ok(mineOnly()))
+    const { wrapper } = await mountPage('/settings/usage-dashboard', { session: FREE })
+    expect(wrapper.text()).not.toContain('$')
+    expect(specs(wrapper).filter(usesUsd)).toEqual([])
+  })
+
+  it('says AI use, not spend, when a free account has no activity', async () => {
+    agentApi.commandCenter.mockResolvedValue(ok(mineOnly({ empty_reason: 'no_activity' })))
+    const { wrapper } = await mountPage('/settings/usage-dashboard?period=7d', { session: FREE })
+    expect(wrapper.find('.viz-state').text()).toContain('Runs and AI use show up here when someone uses the agent or checks prompts.')
+  })
+
+  it('keeps AI spend in dollars for a paid account', async () => {
+    const { wrapper } = await mountPage('/settings/usage-dashboard', { session: PAID })
+    const tiles = wrapper.findAll('.viz-stat')
+    expect(tiles[3].find('.viz-stat-label').text()).toBe('AI spend')
+    expect(tiles[3].text()).toContain('$12.35')
+    expect(chartIds(wrapper)).toContain('command.spend')
+    expect(specs(wrapper).filter(usesUsd).map((s) => s.id)).toEqual(['command.spend', 'command.agents'])
+    expect(wrapper.find('.cc-users thead').text()).toContain('AI spend')
+    expect(wrapper.find('.cc-users tbody').text()).toContain('$4.56')
   })
 })

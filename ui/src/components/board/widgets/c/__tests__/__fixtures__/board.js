@@ -9,6 +9,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { BOARD_CONTEXT, IN_PANEL } from '@/lib/board/context'
+import { useAuthStore } from '@/stores/auth'
 
 const store = reactive({})
 const reloads = {}
@@ -73,15 +74,17 @@ export function testRouter() {
 
 /**
  * Mount a card or panel on a board: the fake context provided (and
- * IN_PANEL with `panel`), a router on the board's route, a fresh Pinia.
+ * IN_PANEL with `panel`), a router on the board's route, a fresh Pinia
+ * (with `session` as the signed-in session, when given, before the mount).
  * Returns {wrapper, board, router}.
  */
 export async function mountOnBoard(
     component,
-    { props = {}, board = fakeBoard(), panel = false, path = '/projects/w1/analytics', stubs = {} } = {},
+    { props = {}, board = fakeBoard(), panel = false, path = '/projects/w1/analytics', stubs = {}, session = null } = {},
 ) {
     const pinia = createPinia()
     setActivePinia(pinia)
+    if (session) useAuthStore().session = session
     const router = testRouter()
     await router.push(path)
     await router.isReady()

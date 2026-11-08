@@ -203,3 +203,31 @@ describe('PromptBoxPanel', () => {
         expect(wrapper.find('h3.pbp-question').text()).toBe('best wiki for small teams')
     })
 })
+
+describe('PromptBoxPanel asked line and the Free plan', () => {
+    const FREE = { limits: { prompt_runs: { unlimited: false, limit: 20, used: 6, reserved: 0, remaining: 14 } } }
+    const PAID = { limits: { prompt_runs: { unlimited: true, limit: null, used: 0, reserved: 0, remaining: null } } }
+
+    async function renderAs(session) {
+        const out = await mountOnBoard(PromptBoxPanel, { panel: true, path: '/projects/w1/analytics?widget=prompt-box', session })
+        mounted.push(out.wrapper)
+        return out
+    }
+
+    it('shows a free account when and how often it asked, with no dollar amount', async () => {
+        const { wrapper } = await renderAs(FREE)
+        expect(wrapper.find('.pbp-meta').text()).toBe('Asked just now, 3 per engine')
+        expect(wrapper.text()).not.toContain('$')
+    })
+
+    it('shows no dollars to a free account with no runs left', async () => {
+        const { wrapper } = await renderAs({ limits: { prompt_runs: { ...FREE.limits.prompt_runs, used: 20, remaining: 0 } } })
+        expect(wrapper.find('.pbp-meta').text()).toBe('Asked just now, 3 per engine')
+        expect(wrapper.text()).not.toContain('$')
+    })
+
+    it('keeps the AI cost for a paid account', async () => {
+        const { wrapper } = await renderAs(PAID)
+        expect(wrapper.find('.pbp-meta').text()).toBe('Asked just now, 3 per engine, AI $0.07')
+    })
+})

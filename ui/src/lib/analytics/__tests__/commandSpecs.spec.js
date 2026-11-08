@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeVizSpec, representationsFor } from '@/lib/charts/spec'
 import {
+  aiRequests,
   commandEmpty,
+  requestsByCategory,
   commandTiles,
   runsByAgent,
   runsByTeam,
@@ -113,5 +115,77 @@ describe('commandEmpty', () => {
       action: { label: 'Open the agent', to: { name: 'agent' } },
     })
     expect(commandEmpty(commandCenter())).toBeNull()
+  })
+})
+
+describe('the Free plan: counts in place of dollars', () => {
+  const FREE = { hideUsd: true }
+  const categories = [
+    { key: 'engines', label: 'AI engine answers', usd: '0.1200', requests: 9 },
+    { key: 'agent_replies', label: 'Agent replies', usd: '0.4200', requests: 14 },
+    { key: 'context', label: '', usd: '0.0061', requests: 0 },
+  ]
+
+  it('adds up the AI requests the ledger recorded, and knows when there is no count', () => {
+    expect(aiRequests(commandCenter({ spend_by_category: categories }))).toBe(23)
+    expect(aiRequests(commandCenter({ spend_by_category: [{ key: 'writers', requests: 1 }] }))).toBe(1)
+    expect(aiRequests(commandCenter({ spend_by_category: [{ key: 'writers', requests: 0 }] }))).toBe(0)
+    expect(aiRequests(commandCenter({ spend_by_category: [] }))).toBeNull()
+    expect(aiRequests(commandCenter({ spend_by_category: [{ key: 'writers', usd: '1.0000' }] }))).toBeNull()
+    expect(aiRequests(commandCenter({ spend_by_category: null }))).toBeNull()
+    expect(aiRequests(null)).toBeNull()
+  })
+
+  it('swaps the AI spend tile for AI requests, with no dollar value or change', () => {
+    const tiles = commandTiles(commandCenter({ spend_by_category: categories }), FREE)
+    expect(tiles.map((t) => [t.key, t.label, t.value, t.kind])).toEqual([
+      ['runs', 'Agent runs', 120, 'count'],
+      ['active_users', 'Active users', 5, 'count'],
+      ['drafts_saved', 'Drafts saved', 25, 'count'],
+      ['ai_requests', 'AI requests', 23, 'count'],
+      ['failed', 'Failed runs', '6 of 120', 'number'],
+    ])
+    expect(tiles[3].delta).toBeNull()
+    expect(tiles.some((t) => t.kind === 'usd')).toBe(false)
+    // No count to show: an unknown value, never a made-up zero.
+    expect(commandTiles(commandCenter({ spend_by_category: [] }), FREE)[3].value).toBeNull()
+  })
+
+  it('charts AI requests by category in the usual order, in counts', () => {
+    const spec = requestsByCategory(commandCenter({ spend_by_category: categories }))
+    expect(spec).toMatchObject({ id: 'command.requests', title: 'AI requests', value: 'count', type: 'hbar', x: 'category' })
+    expect(spec.labels).toEqual(['agent_replies', 'context', 'engines'])
+    expect(spec.label_names).toEqual({ agent_replies: 'Agent replies', context: 'Context builds', engines: 'AI engine answers' })
+    expect(spec.datasets).toEqual([{ key: 'requests', label: 'Requests', data: [14, 0, 9] }])
+    expect(JSON.stringify(spec)).not.toContain('usd')
+    expect(representationsFor(normalizeVizSpec(spec))).toContain('hbar')
+  })
+
+  it('charts nothing for a payload with no request counts', () => {
+    const spec = requestsByCategory(commandCenter({ spend_by_category: [{ key: 'writers', usd: '1.0000' }, null] }))
+    expect(spec.labels).toEqual([])
+    expect(spec.datasets[0].data).toEqual([])
+    expect(requestsByCategory(null).labels).toEqual([])
+  })
+
+  it('drops AI spend from the agent measures', () => {
+    const spec = runsByAgent(commandCenter(), FREE)
+    expect(spec.datasets.map((d) => [d.key, d.value])).toEqual([
+      ['runs', 'count'],
+      ['drafts_saved', 'count'],
+    ])
+  })
+
+  it('leaves the Top users AI spend empty', () => {
+    const rows = topUserRows(commandCenter(), FREE)
+    expect(rows.map((r) => r.ai_usd)).toEqual(['', ''])
+    expect(rows[0]).toMatchObject({ name: 'Site Owner', runs: '40', active_days: '12' })
+    expect(JSON.stringify(rows)).not.toContain('$')
+  })
+
+  it('says AI use, not spend, in the empty state', () => {
+    expect(commandEmpty(commandCenter({ empty_reason: 'no_activity' }), '7d', FREE).body).toBe(
+      'Runs and AI use show up here when someone uses the agent or checks prompts.',
+    )
   })
 })
