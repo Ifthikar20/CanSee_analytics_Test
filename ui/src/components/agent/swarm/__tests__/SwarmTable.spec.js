@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RouterLinkStub, enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { nextTick, reactive } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { SERP_TAB, SWARM_ID, categories, swarmTable, tablePart } from './__fixtures__/swarmParts.js'
+import {
+  PROMPT,
+  SERP_TAB,
+  SWARM_ID,
+  categories,
+  overflowTable,
+  swarmTable,
+  tablePart,
+} from './__fixtures__/swarmParts.js'
 
 const fakeAgent = reactive({})
 const fakePane = reactive({})
@@ -377,5 +385,148 @@ describe('SwarmTable reports and re-run', () => {
     expect(footerButton(w, 'Add to report')).toBeUndefined()
     expect(footerButton(w, 'Re-run')).toBeUndefined()
     expect(footerButton(w, 'Download CSV')).toBeDefined()
+  })
+})
+
+describe('SwarmTable changes since the previous version', () => {
+  const toggle = (w) => w.find('button.ag-st-toggle')
+
+  it('marks the changed rows with a badge that names the changed columns', () => {
+    const w = render()
+    const [p1, p2, p3] = w.findAll('tbody tr')
+    expect(p1.classes()).toContain('is-changed')
+    expect(p2.classes()).not.toContain('is-changed')
+    expect(p3.classes()).not.toContain('is-changed')
+    expect(p1.find('.ag-st-badge').text()).toBe('Changed since version 1: Google')
+    expect(p1.find('.ag-st-badge .ag-st-sr').exists()).toBe(true)
+    // The badge sits outside the cell text, so the row label is unchanged.
+    expect(bodyKeys(w)[0]).toBe(PROMPT)
+  })
+
+  it('filters to the listed changes and says when a sheet has none', async () => {
+    const w = render()
+    expect(toggle(w).attributes('aria-pressed')).toBe('false')
+    await toggle(w).trigger('click')
+    expect(toggle(w).attributes('aria-pressed')).toBe('true')
+    expect(bodyKeys(w)).toEqual([PROMPT])
+    expect(w.find('.ag-st-chip').text()).toBe('v2')
+    await w.findAll('[role="tab"]')[1].trigger('click')
+    expect(w.find('.ag-st-empty').text()).toBe('No changes since version 1 in this sheet.')
+    await toggle(w).trigger('click')
+    expect(w.find('.ag-st-empty').exists()).toBe(false)
+  })
+
+  it('offers the changed cells past the list cap', async () => {
+    const w = render({ part: tablePart({ table: overflowTable() }) })
+    expect(w.findAll('tbody tr.is-changed')).toHaveLength(3)
+    expect(w.find('.ag-st-more').exists()).toBe(false)
+    await toggle(w).trigger('click')
+    expect(bodyKeys(w)).toEqual([PROMPT])
+    const more = w.find('.ag-st-more button')
+    expect(more.text()).toBe('Show 2 more changed rows')
+    await more.trigger('click')
+    expect(bodyKeys(w)).toEqual([PROMPT, 'notes app with offline mode', 'Alternatives to Evernote'])
+    expect(w.find('.ag-st-more').exists()).toBe(false)
+  })
+
+  it('offers no filter on a first version', () => {
+    const table = swarmTable({ previous_version: null, changes: [] })
+    table.sheets[0].rows[0].cells.google.previous = null
+    const w = render({ part: tablePart({ table }) })
+    expect(toggle(w).exists()).toBe(false)
+    expect(w.findAll('tbody tr.is-changed')).toHaveLength(0)
+    expect(w.find('.ag-st-badge').exists()).toBe(false)
+  })
+
+  it('adds only the rows shown while filtered; a hidden checked row waits for the filter to go', async () => {
+    const w = render()
+    const check = (label) =>
+      w.findAll('input.ag-st-check').find((el) => el.attributes('aria-label').includes(label))
+    await check('Alternatives to Evernote').setValue(true)
+    expect(footerButton(w, 'Add 1 to findings')).toBeDefined()
+    await toggle(w).trigger('click')
+    // The checked row is hidden: the footer offers the shown rows only.
+    expect(footerButton(w, 'Add 1 to findings')).toBeUndefined()
+    expect(footerButton(w, 'Add all shown to findings').text()).toBe('Add all shown to findings (1)')
+    await footerButton(w, 'Add all shown to findings').trigger('click')
+    await flushPromises()
+    expect(fakeFindings.addFromTable).toHaveBeenCalledWith({ swarmId: SWARM_ID, version: 2, sheet: 'prompts', rowKeys: ['p1'] })
+    await toggle(w).trigger('click')
+    expect(check('Alternatives to Evernote').element.checked).toBe(true)
+    expect(footerButton(w, 'Add 1 to findings')).toBeDefined()
+  })
+
+  it('keeps rows checked on another sheet out of a filtered add', async () => {
+    const table = swarmTable()
+    const w = render({ part: tablePart({ table }) })
+    await w.findAll('input.ag-st-check')[1].setValue(true)
+    await w.findAll('[role="tab"]')[1].trigger('click')
+    await toggle(w).trigger('click')
+    await w.findAll('[role="tab"]')[0].trigger('click')
+    expect(footerButton(w, 'Add 1 to findings')).toBeUndefined()
+    expect(footerButton(w, 'Add all shown to findings').text()).toBe('Add all shown to findings (1)')
+  })
+
+  it('says when the most significant changes are all on other sheets', async () => {
+    const table = overflowTable()
+    const gaps = table.sheets.find((s) => s.key === 'gaps')
+    const [column] = Object.keys(gaps.rows[0].cells)
+    gaps.rows[0].cells[column].previous = { text: 'old text', version: 1 }
+    const w = render({ part: tablePart({ table }) })
+    await toggle(w).trigger('click')
+    await w.findAll('[role="tab"]')[1].trigger('click')
+    expect(w.find('.ag-st-empty').text()).toBe('None of the most significant changes are in this sheet.')
+    expect(w.find('.ag-st-more button').text()).toBe('Show 1 more changed row')
+    await w.find('.ag-st-more button').trigger('click')
+    await flushPromises()
+    expect(w.find('.ag-st-empty').exists()).toBe(false)
+    expect(w.findAll('tbody tr')).toHaveLength(1)
+    // The button is gone; focus stays in the table instead of falling to the page.
+    expect(document.activeElement.getAttribute('role')).toBe('tabpanel')
+  })
+
+  it('shows a row new since the previous version under the filter, badged New', async () => {
+    const table = swarmTable()
+    const gaps = table.sheets.find((s) => s.key === 'gaps')
+    gaps.rows[0].added = true
+    const w = render({ part: tablePart({ table }) })
+    await w.findAll('[role="tab"]')[1].trigger('click')
+    const row = w.find('tbody tr')
+    expect(row.classes()).toContain('is-changed')
+    expect(row.find('.ag-st-badge').text()).toBe('New since version 1')
+    expect(row.find('.ag-st-badge').classes()).toContain('is-new')
+    await toggle(w).trigger('click')
+    expect(w.findAll('tbody tr')).toHaveLength(1)
+    expect(w.find('.ag-st-more').exists()).toBe(false)
+  })
+
+  it('keeps the filter for a new version and folds the extra changes again', async () => {
+    const w = render({ part: tablePart({ table: overflowTable() }) })
+    await toggle(w).trigger('click')
+    await w.find('.ag-st-more button').trigger('click')
+    await w.setProps({ part: tablePart({ version: 3, table: overflowTable({ version: 3, previous_version: 2 }) }) })
+    expect(toggle(w).attributes('aria-pressed')).toBe('true')
+    expect(w.find('.ag-st-more button').text()).toBe('Show 2 more changed rows')
+  })
+
+  it('takes "Changed only" from its caller and reports changes to it', async () => {
+    const w = render({ changedOnly: true })
+    expect(toggle(w).attributes('aria-pressed')).toBe('true')
+    expect(bodyKeys(w)).toEqual([PROMPT])
+    await toggle(w).trigger('click')
+    expect(w.emitted('update:changedOnly')).toEqual([[false]])
+    // The caller keeps the value: until it changes the prop, the filter stays.
+    await w.setProps({ changedOnly: false })
+    expect(toggle(w).attributes('aria-pressed')).toBe('false')
+    expect(bodyKeys(w)).toHaveLength(3)
+  })
+
+  it('still exports the whole sheet while filtered', async () => {
+    const w = render()
+    await toggle(w).trigger('click')
+    await w.find('button[aria-label="Download CSV"]').trigger('click')
+    const [text] = downloadText.mock.calls.at(-1)
+    expect(text).toContain('Alternatives to Evernote')
+    expect(text).toContain('notes app with offline mode')
   })
 })

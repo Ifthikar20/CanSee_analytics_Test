@@ -4,15 +4,23 @@ import {
   addableRowKeys,
   ariaSort,
   cellClasses,
+  changeIndex,
+  changedColumns,
   csvFilename,
   csvRows,
+  filterChangedRows,
+  hasChanges,
+  hasPrevious,
   isCarried,
+  isChangedRow,
   nextSort,
   rowLabel,
   sortRows,
   tableSheets,
+  unlistedChangedRows,
+  isAddedRow,
 } from '../tableModel'
-import { swarmTable } from './__fixtures__/swarmParts.js'
+import { overflowTable, swarmTable } from './__fixtures__/swarmParts.js'
 
 const row = (key, v) => ({ key, cells: { c: { text: String(v ?? ''), v } } })
 const keys = (rows) => rows.map((r) => r.key)
@@ -97,5 +105,118 @@ describe('CSV', () => {
   it('names the file after the research, version and sheet', () => {
     const table = swarmTable()
     expect(csvFilename(table, table.sheets[1])).toBe('Research Notion v2 Content gaps.csv')
+  })
+})
+
+describe('changes since the previous version', () => {
+  const promptsOf = (table) => table.sheets[0]
+  const gapsOf = (table) => table.sheets[1]
+
+  it('reads a cell as changed only when it has a previous text', () => {
+    expect(hasPrevious({ previous: { text: '#6', version: 1 } })).toBe(true)
+    expect(hasPrevious({ previous: { text: '', version: 1 } })).toBe(true)
+    expect(hasPrevious({ previous: { text: null, version: 1 } })).toBe(false)
+    expect(hasPrevious({ previous: null })).toBe(false)
+    expect(hasPrevious(null)).toBe(false)
+  })
+
+  it('indexes the listed changes by sheet and row, skipping incomplete entries', () => {
+    const table = swarmTable({
+      changes: [
+        ...swarmTable().changes,
+        { sheet: 'prompts', row: 'p1', column: 'chatgpt' },
+        { sheet: 'prompts', column: 'google' },
+        null,
+      ],
+    })
+    const index = changeIndex(table)
+    expect([...index.keys()]).toEqual(['prompts\u0000p1'])
+    expect([...index.get('prompts\u0000p1')]).toEqual(['google', 'chatgpt'])
+    expect(changeIndex(null).size).toBe(0)
+  })
+
+  it('finds the changed cells and rows', () => {
+    const [p1, p2] = promptsOf(swarmTable()).rows
+    expect(changedColumns(p1)).toEqual(['google'])
+    expect(isChangedRow(p1)).toBe(true)
+    expect(changedColumns(p2)).toEqual([])
+    expect(isChangedRow(p2)).toBe(false)
+    expect(isChangedRow({ key: 'x' })).toBe(false)
+  })
+
+  it('offers changes only when a previous version exists and something changed', () => {
+    expect(hasChanges(swarmTable())).toBe(true)
+    const first = swarmTable({ previous_version: null, changes: [] })
+    first.sheets[0].rows[0].cells.google.previous = null
+    expect(hasChanges(first)).toBe(false)
+    const unchanged = swarmTable({ changes: [] })
+    unchanged.sheets[0].rows[0].cells.google.previous = null
+    expect(hasChanges(unchanged)).toBe(false)
+    // An empty change list with previous markers still counts.
+    expect(hasChanges(swarmTable({ changes: [] }))).toBe(true)
+    expect(hasChanges(null)).toBe(false)
+  })
+
+  it('filters to the listed rows in their order, or every changed row', () => {
+    const table = overflowTable()
+    const rows = promptsOf(table).rows
+    const keys = (list) => list.map((r) => r.key)
+    expect(keys(filterChangedRows(table, promptsOf(table), rows))).toEqual(['p1'])
+    expect(keys(filterChangedRows(table, promptsOf(table), rows, { unlisted: true }))).toEqual(['p1', 'p2', 'p3'])
+    expect(keys(filterChangedRows(table, promptsOf(table), [...rows].reverse(), { unlisted: true }))).toEqual([
+      'p3',
+      'p2',
+      'p1',
+    ])
+    expect(filterChangedRows(table, gapsOf(table), gapsOf(table).rows)).toEqual([])
+  })
+
+  it('counts the changed rows the list leaves out entirely, per sheet', () => {
+    expect(unlistedChangedRows(swarmTable(), promptsOf(swarmTable()))).toBe(0)
+    const table = overflowTable()
+    expect(unlistedChangedRows(table, promptsOf(table))).toBe(2)
+    expect(unlistedChangedRows(table, gapsOf(table))).toBe(0)
+    // With no list at all, every changed row is unlisted.
+    expect(unlistedChangedRows(overflowTable({ changes: [] }), promptsOf(overflowTable()))).toBe(3)
+  })
+
+  it('never counts a listed row again for a cell the list left out', () => {
+    const table = overflowTable()
+    // p1 is listed for Google; its ChatGPT change fell past the cap.
+    promptsOf(table).rows[0].cells.chatgpt.previous = { text: 'Named #1', version: 1 }
+    expect(unlistedChangedRows(table, promptsOf(table))).toBe(2)
+  })
+})
+
+describe('rows new since the previous version', () => {
+  const promptsOf = (table) => table.sheets[0]
+  const gapsOf = (table) => table.sheets[1]
+
+  function withNewGap(overrides = {}) {
+    const table = swarmTable({ changes: [], ...overrides })
+    table.sheets[0].rows[0].cells.google.previous = null
+    gapsOf(table).rows[0].added = true
+    return table
+  }
+
+  it('knows a new row only by the server mark', () => {
+    const table = withNewGap()
+    expect(isAddedRow(gapsOf(table).rows[0])).toBe(true)
+    expect(isAddedRow(promptsOf(table).rows[0])).toBe(false)
+    expect(isAddedRow({ key: 'x', added: 'yes' })).toBe(false)
+    expect(isAddedRow(null)).toBe(false)
+  })
+
+  it('offers the filter when the only change is a new row', () => {
+    expect(hasChanges(withNewGap())).toBe(true)
+    expect(hasChanges(withNewGap({ previous_version: null }))).toBe(false)
+  })
+
+  it('always shows new rows under the filter, and never counts them as unlisted', () => {
+    const table = withNewGap()
+    const gaps = gapsOf(table)
+    expect(filterChangedRows(table, gaps, gaps.rows).map((r) => r.key)).toEqual([gaps.rows[0].key])
+    expect(unlistedChangedRows(table, gaps)).toBe(0)
+    expect(filterChangedRows(table, promptsOf(table), promptsOf(table).rows)).toEqual([])
   })
 })

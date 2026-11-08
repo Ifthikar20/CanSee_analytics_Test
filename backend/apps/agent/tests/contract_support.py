@@ -122,6 +122,9 @@ TAB_SPEC = {"id", "kind", "title", "status", "data"}
 TAB_STATUSES = {"loading", "ready", "error"}
 SERP_CAPTURE = {"capture_id", "query", "page", "start", "location", "captured_at", "brand",
                 "brand_positions", "results", "ai_overview", "people_also_ask", "error"}
+# A research agent's Google page also names the plan prompt it was searched for.
+# Ad-hoc google_search captures (browser.update, report snapshots) carry no stamp.
+SWARM_SERP_CAPTURE = SERP_CAPTURE | {"prompt_key", "prompt_id", "brand_prompt_id"}
 SERP_RESULT = {"position", "title", "url", "display_url", "domain", "snippet", "is_yours",
                "is_competitor"}
 AI_OVERVIEW = {"shown", "mentions_you", "cites_you", "references"}
@@ -346,7 +349,8 @@ def assert_event(event: dict) -> None:
             assert event["patch"]["status"] in TASK_STATUSES - {"queued", "running"}
     elif event["type"] == "research.recorded":
         assert event["kind"] in ("serp", "page")
-        expected = SERP_CAPTURE if event["kind"] == "serp" else PAGE_CAPTURE - {"reader"}
+        # Only serp_page records serp captures this way, so they are always stamped.
+        expected = SWARM_SERP_CAPTURE if event["kind"] == "serp" else PAGE_CAPTURE - {"reader"}
         assert not missing(expected, event["capture"]), missing(expected, event["capture"])
         assert "reader" not in event["capture"]
 
