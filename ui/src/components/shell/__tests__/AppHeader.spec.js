@@ -6,6 +6,7 @@ import { setLastChat } from '@/lib/agent/storage'
 import { useAgentUiStore } from '@/stores/agentUi'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
+import { useHelpStore } from '@/stores/help'
 import { SITES, makeShellRouter } from './__fixtures__/shellRouter'
 
 const feedback = vi.hoisted(() => ({ enabled: false, real: false }))
@@ -21,6 +22,8 @@ vi.mock('@/api/feedbackClient', () => ({
   },
   loadTokens: () => [],
   rememberToken: () => {},
+  loadSeen: () => ({}),
+  saveSeen: () => {},
   default: {},
 }))
 // A stub, or the real widget where a case needs its dialog.
@@ -60,7 +63,7 @@ async function setup(path = '/projects/w1/analytics', { sites = SITES, websiteId
   })
   mounted.push(wrapper)
   await flushPromises()
-  return { wrapper, router, app, auth, ui: useAgentUiStore() }
+  return { wrapper, router, app, auth, ui: useAgentUiStore(), help: useHelpStore() }
 }
 
 const navLinks = (wrapper) => wrapper.findAll('.shell-nav a')
@@ -189,15 +192,19 @@ describe('AppHeader phone sheet', () => {
     expect(sheet.element.tagName).toBe('NAV')
     expect(sheet.attributes('aria-label')).toBe('Main')
     expect(sheet.findAll('a').map((a) => a.text())).toEqual(['Analytics', 'Agent', 'Settings', 'Docs', 'Support'])
-    expect(sheet.findAll('button').map((b) => b.text())).toEqual(['Keyboard shortcuts', 'Switch to dark theme'])
+    expect(sheet.findAll('button').map((b) => b.text())).toEqual([
+      'Help center',
+      'Keyboard shortcuts',
+      'Switch to dark theme',
+    ])
     expect(sheet.findAll('[aria-current="page"]').map((a) => a.text())).toEqual(['Agent'])
     const docs = sheet.findAll('a')[3]
     expect([docs.attributes('href'), docs.attributes('target')]).toEqual(['/docs', '_blank'])
 
     // The theme row keeps the sheet open; a link closes it.
-    await sheet.findAll('button')[1].trigger('click')
+    await sheet.findAll('button')[2].trigger('click')
     expect(sheet.isVisible()).toBe(true)
-    expect(sheet.findAll('button')[1].text()).toBe('Switch to light theme')
+    expect(sheet.findAll('button')[2].text()).toBe('Switch to light theme')
     await sheet.findAll('a')[0].trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe('/projects/w1/analytics')
@@ -284,6 +291,21 @@ describe('AppHeader phone sheet', () => {
     expect(burger.attributes('aria-expanded')).toBe('false')
   })
 
+  it('opens the help center from the sheet and gives focus to the menu button', async () => {
+    const { wrapper, help } = await setup('/projects/w1/analytics')
+    const burger = wrapper.find('button.shell-burger')
+    await burger.trigger('click')
+    const row = sheetOf(wrapper)
+      .findAll('button')
+      .find((b) => b.text() === 'Help center')
+    expect(row.attributes('aria-haspopup')).toBe('dialog')
+    row.element.focus()
+    await row.trigger('click')
+    expect(help.isOpen).toBe(true)
+    expect(sheetOf(wrapper).isVisible()).toBe(false)
+    expect(document.activeElement).toBe(burger.element)
+  })
+
   it('closes when the window widens past 900px', async () => {
     const queries = stubMatchMedia()
     const { wrapper } = await setup('/projects/w1/analytics')
@@ -301,16 +323,28 @@ describe('AppHeader phone sheet', () => {
     const burger = wrapper.find('button.shell-burger')
     await burger.trigger('click')
     const rows = () => sheetOf(wrapper).findAll('button')
-    expect(rows().map((b) => b.text())).toEqual(['Help & feedback', 'Keyboard shortcuts', 'Switch to dark theme'])
+    expect(rows().map((b) => b.text())).toEqual([
+      'Help center',
+      'Help & feedback',
+      'Keyboard shortcuts',
+      'Switch to dark theme',
+    ])
     expect(document.body.querySelector('.fw-card')).toBeNull()
 
-    rows()[0].element.focus()
-    await rows()[0].trigger('click')
+    rows()[1].element.focus()
+    await rows()[1].trigger('click')
     await flushPromises()
     // The bar's one widget opens its dialog; its own button is hidden at this width.
-    expect(document.body.querySelector('.fw-card h2').textContent).toBe('Help & feedback')
+    const card = document.body.querySelector('.fw-card')
+    expect(card.querySelector('h2').textContent).toBe('Help & feedback')
     expect(wrapper.findAll('button[title="Help & feedback"]')).toHaveLength(1)
     expect(sheetOf(wrapper).isVisible()).toBe(false)
+    // A modal dialog: focus moves in, and Escape hands it back to the menu
+    // button, not to the hidden row.
+    expect(card.contains(document.activeElement)).toBe(true)
+    escape(document.activeElement)
+    await flushPromises()
+    expect(document.body.querySelector('.fw-card')).toBeNull()
     expect(document.activeElement).toBe(burger.element)
   })
 })
@@ -327,20 +361,19 @@ describe('AppHeader controls', () => {
     app.setTheme('light')
   })
 
-  it('opens the keyboard shortcuts, Docs and Support from the help menu', async () => {
-    const { wrapper, ui } = await setup()
-    await wrapper.find('button[aria-label="Help"]').trigger('click')
+  it('opens the help drawer from the help button in one click, with no menu', async () => {
+    const { wrapper, help } = await setup()
+    const button = wrapper.find('button[aria-label="Help"]')
+    expect(button.attributes('aria-haspopup')).toBe('dialog')
+    expect(button.attributes('aria-expanded')).toBe('false')
+    await button.trigger('click')
     await flushPromises()
-    const docs = menuItem('Docs')
-    const support = menuItem('Support')
-    expect(docs.tagName).toBe('A')
-    expect([docs.getAttribute('href'), docs.getAttribute('target')]).toEqual(['/docs', '_blank'])
-    expect([support.getAttribute('href'), support.getAttribute('target')]).toEqual(['/support', '_blank'])
-    expect(menuItem('Keyboard shortcuts').querySelector('.ag-kbd')).not.toBeNull()
-
-    menuItem('Keyboard shortcuts').click()
-    await flushPromises()
-    expect(ui.shortcutsOpen).toBe(true)
+    expect(help.isOpen).toBe(true)
+    expect(button.attributes('aria-expanded')).toBe('true')
+    expect(button.attributes('data-state')).toBe('open')
+    expect(document.body.querySelector('.ag-portal.ag-menu')).toBeNull()
+    await button.trigger('click')
+    expect(help.isOpen).toBe(false)
   })
 
   it('shows the organization chip only for organization sessions', async () => {

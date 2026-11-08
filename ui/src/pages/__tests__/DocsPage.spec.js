@@ -1,24 +1,40 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import DocsPage from '@/pages/DocsPage.vue'
-
-enableAutoUnmount(afterEach)
+import { featuredFaqs } from '@/lib/help/faq'
+import { useAuthStore } from '@/stores/auth'
+import { useHelpStore } from '@/stores/help'
 
 const Blank = defineComponent({ render: () => h('div') })
+const mounted = []
 
-async function render() {
+afterEach(() => {
+  while (mounted.length) mounted.pop().unmount()
+  document.body.innerHTML = ''
+  localStorage.clear()
+})
+
+async function render({ signedIn = false } = {}) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  if (signedIn) useAuthStore().accessToken = 'token'
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/', component: Blank },
+      { path: '/login', component: Blank },
+      { path: '/dashboard', component: Blank },
+      { path: '/support', name: 'support', component: Blank },
       { path: '/docs', name: 'docs', component: DocsPage },
     ],
   })
   await router.push('/docs')
   await router.isReady()
-  const wrapper = mount(DocsPage, { global: { plugins: [router] }, attachTo: document.body })
+  const wrapper = mount(DocsPage, { global: { plugins: [pinia, router] }, attachTo: document.body })
+  mounted.push(wrapper)
   await flushPromises()
   return wrapper
 }
@@ -43,5 +59,40 @@ describe('DocsPage', () => {
     expect(wrapper.find('section#sources h2').text()).toBe('Citations')
     expect(wrapper.find('section#overview').text()).toContain('The board starts with Ask AI and Prompt ranking.')
     expect(wrapper.find('section#quickstart').text()).toContain('On Analytics, choose Add prompts in Prompts')
+  })
+})
+
+describe('DocsPage help', () => {
+  it('shows the help center\'s featured questions in the rail, and opens all of them in the drawer', async () => {
+    const wrapper = await render()
+    const rail = wrapper.find('.dx-rail')
+    expect(rail.findAll('details.faq summary').map((s) => s.text())).toEqual(featuredFaqs('docs').map((f) => f.q))
+    const all = rail.find('button.dx-rail-all')
+    expect(all.text()).toBe('All questions')
+    await all.trigger('click')
+    await flushPromises()
+    expect(useHelpStore().isOpen).toBe(true)
+    expect(document.body.querySelector('.help-drawer [role="dialog"], .help-drawer')).not.toBeNull()
+  })
+
+  it('has the sections the help answers link to', async () => {
+    const wrapper = await render()
+    for (const id of ['ask-ai', 'agent', 'research', 'findings', 'reports']) {
+      expect(wrapper.find(`section#${id} h2`).exists(), id).toBe(true)
+    }
+    expect(wrapper.find('#autopilot h3').text()).toBe('Autopilot')
+    expect(wrapper.find('#billing').text()).toContain('20 prompt runs a month')
+    expect(wrapper.find('section#reports').text()).toContain('Change log since the last run')
+  })
+
+  it('offers Sign in to visitors and Open app to signed-in users', async () => {
+    let wrapper = await render()
+    expect(wrapper.find('.dx-cta').text()).toBe('Sign in')
+    expect(wrapper.find('.dx-cta').attributes('href')).toBe('/login')
+    while (mounted.length) mounted.pop().unmount()
+    localStorage.clear()
+    wrapper = await render({ signedIn: true })
+    expect(wrapper.find('.dx-cta').text()).toBe('Open app')
+    expect(wrapper.find('.dx-cta').attributes('href')).toBe('/dashboard')
   })
 })
