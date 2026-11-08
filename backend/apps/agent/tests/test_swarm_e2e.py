@@ -791,9 +791,11 @@ def test_a_research_runs_end_to_end_in_thread_mode(settings, user, website, chat
 def test_the_swarm_migration_is_applied_and_is_the_agent_leaf():
     applied = MigrationRecorder(connection).applied_migrations()
     assert ("agent", "0002_swarm_findings") in applied
-    # Wave 2's context and review tables (0003) come after it.
+    # Wave 2's context and review tables (0003) and the run constraints
+    # (0004) come after it.
+    assert ("agent", "0003_context_reviews") in applied
     leaves = MigrationLoader(connection).graph.leaf_nodes("agent")
-    assert leaves == [("agent", "0003_context_reviews")]
+    assert leaves == [("agent", "0004_run_constraints")]
     tables = set(connection.introspection.table_names())
     assert {"agent_swarm", "agent_swarm_version", "agent_finding"} <= tables
     with connection.cursor() as cursor:

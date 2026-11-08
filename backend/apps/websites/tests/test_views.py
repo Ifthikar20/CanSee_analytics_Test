@@ -146,6 +146,32 @@ class TestProjectLimit:
         assert resp.status_code == 403
         assert resp.json()["error"]["meta"]["limit"] == 5
 
+    def test_the_free_message_names_the_plan_and_what_adds_room(self, auth_client):
+        client, user = auth_client
+        WebsiteFactory(user=user)
+        message = client.post(CREATE_URL, _payload(), format="json").json()["error"]["message"]
+        assert message == ("Your Free plan allows up to 1 project. Choose the 100 or 200 "
+                           "prompt plan to add more.")
+
+    def test_a_paid_plan_is_named_from_plan_names(self, auth_client):
+        client, user = auth_client
+        _subscription(user, plan=Plan.PROMPTS_100, status=SubscriptionStatus.ACTIVE)
+        for _ in range(5):
+            WebsiteFactory(user=user)
+        message = client.post(CREATE_URL, _payload(), format="json").json()["error"]["message"]
+        # Not "Prompts_100", and no upgrade the plan does not have.
+        assert message == ("Your 100 prompts plan allows up to 5 projects. Delete a project to "
+                           "add another, or contact us about the Business plan.")
+
+    def test_the_trial_message_does_not_promise_pro(self, auth_client):
+        client, user = auth_client
+        _subscription(user, plan=Plan.PROMPTS_200, status=SubscriptionStatus.TRIALING)
+        WebsiteFactory(user=user)
+        message = client.post(CREATE_URL, _payload(), format="json").json()["error"]["message"]
+        assert "Pro" not in message
+        assert message == ("Your free trial includes 1 project. The 200 prompts plan's 5 "
+                           "projects unlock when your subscription starts.")
+
     def test_business_unlimited(self, auth_client):
         client, user = auth_client
         _subscription(user, plan=Plan.BUSINESS, status=SubscriptionStatus.ACTIVE)

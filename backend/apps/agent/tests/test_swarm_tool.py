@@ -326,12 +326,13 @@ def test_refusals_close_the_planning_part(chat, configured, executor, settings, 
 
     settings.AI_FREE_MONTHLY_CAP_USD = 0.30
     spend(chat.user, 0.10)
+    # A free account's allowance is a hidden backstop: no dollars.
     assert_refused(tool_context(chat), by_id, "insufficient_allowance",
-                   "Not enough AI allowance: this research needs up to $0.31 and $0.20 of the "
-                   "$0.30 monthly allowance is left. Use fewer prompts or engines.")
+                   "This needs more of this month's free AI allowance than is left. "
+                   "Choose fewer prompts or engines.")
     spend(chat.user, 0.25)
     assert_refused(tool_context(chat), by_id, "allowance_exceeded",
-                   "You have used your monthly AI allowance.")
+                   "This month's free AI allowance is used up. It renews next month.")
 
     assert not AgentSwarm.objects.exists() and executor.calls == []
 

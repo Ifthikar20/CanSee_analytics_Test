@@ -59,8 +59,8 @@ def test_the_100_prompt_plan_matches_the_contract(settings):
         "features": ["100 tracked prompts", "ChatGPT and Claude, asked every day",
                      "Google page one, checked every week", "One text a day with your results",
                      "$52 of AI usage a month", "5 projects"],
-        "limits": {"projects": 5, "monthly_prompts": -1, "tracked_prompts": 100,
-                   "autopilot": True, "sms_digest": True},
+        "limits": {"projects": 5, "monthly_prompts": -1, "monthly_prompt_runs": -1,
+                   "tracked_prompts": 100, "autopilot": True, "sms_digest": True},
     }
     plan = _plan("prompts_200")
     assert (plan["name"], plan["price_monthly"], plan["limits"]["tracked_prompts"]) == (
@@ -86,9 +86,12 @@ def test_feature_lines_promise_only_what_the_server_can_do(settings):
 
 def test_free_and_business_entries():
     free = _plan("free")
-    assert free["features"] == ["1 project", "5 tracked prompts", "$1 of AI usage a month"]
+    # The free plan names its prompt runs; its dollar backstop stays hidden.
+    assert free["features"] == ["1 project", "5 tracked prompts", "20 prompt runs a month"]
+    assert not any("$" in line for line in free["features"])
     assert (free["self_serve"], free["price_monthly"], free["limits"]["tracked_prompts"]) == (
         False, 0, 5)
+    assert (free["limits"]["monthly_prompt_runs"], free["limits"]["monthly_prompts"]) == (20, -1)
     assert free["limits"]["autopilot"] is False and free["limits"]["sms_digest"] is False
     business = _plan("business")
     assert (business["self_serve"], business["price_monthly"]) == (False, -1)
@@ -160,21 +163,34 @@ def test_plan_allows_follows_the_plan(user, settings):
     assert plan_allows(fresh(user), "nonexistent_feature") is False
 
 
+def _runs(block: dict) -> tuple:
+    runs = block.pop("prompt_runs")
+    return runs["unlimited"], runs["limit"], runs["used"], runs["remaining"]
+
+
 def test_limits_block(user, settings):
     website = make_website(user)
     track(website, 3)
     track(website, 2, archived=True)
-    assert limits_block(user) == {
+    block = limits_block(user)
+    # Prompt runs follow the AI allowance's plan, which the paywall switch
+    # does not lift: an account without a subscription has its 20.
+    assert _runs(block) == (False, 20, 0, 20)
+    assert block == {
         "projects": -1, "tracked_prompts": {"limit": -1, "used": 3},
         "autopilot": True, "sms_digest": True,
     }
     settings.PAYWALL_ENABLED = True
-    assert limits_block(fresh(user)) == {
+    block = limits_block(fresh(user))
+    assert _runs(block) == (False, 20, 0, 20)
+    assert block == {
         "projects": 1, "tracked_prompts": {"limit": 5, "used": 3},
         "autopilot": False, "sms_digest": False,
     }
     subscribe(user, Plan.PROMPTS_200)
-    assert limits_block(fresh(user)) == {
+    block = limits_block(fresh(user))
+    assert _runs(block) == (True, None, 0, None)
+    assert block == {
         "projects": 5, "tracked_prompts": {"limit": 200, "used": 3},
         "autopilot": True, "sms_digest": True,
     }
@@ -189,11 +205,13 @@ def test_billing_overview_and_session_carry_the_limits(user, settings):
 
     overview = data(client_for(fresh(user)).get(reverse("billing-overview")))
     assert overview["plan"] == "prompts_100"
+    assert _runs(overview["limits"]) == (True, None, 0, None)
     assert overview["limits"] == expected
     assert overview["plan_details"]["name"] == "100 prompts"
     assert overview["billing_ready"] is False
 
     session = data(client_for(fresh(user)).get(reverse("auth-session")))
+    assert _runs(session["limits"]) == (True, None, 0, None)
     assert session["limits"] == expected
     assert session["subscription"]["plan"] == "prompts_100"
 

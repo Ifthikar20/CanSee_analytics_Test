@@ -20,6 +20,8 @@ from apps.insights.tests.support import (
     track,
 )
 from apps.llm_ranking.models import LLMRankingAudit
+from apps.metering.services import prompt_runs
+from apps.metering.tests.prompt_run_support import make_paid, use_runs
 from apps.prompt_library.models import BrandPrompt, Prompt, PromptFanout
 from apps.search_gap.models import GoogleRankCheck
 from core.exceptions import CanseeException
@@ -311,6 +313,8 @@ def test_track_creates_the_prompt_and_one_scan_of_the_counted_engines(
 
 
 def test_track_blockers(website, user, engines, scans, monkeypatch, settings):
+    # A paid account sees its allowance in dollars.
+    make_paid(user)
     idea = an_idea(website)
     monkeypatch.setattr("core.ai_tracking.effective_ai_cap", lambda u: 1.0)
     monkeypatch.setattr("core.ai_tracking.month_to_date_cost", lambda u: 0.97)
@@ -328,6 +332,27 @@ def test_track_blockers(website, user, engines, scans, monkeypatch, settings):
         prompt_ideas.track(website, user, idea, {"ai_usd_max": "1"})
     assert (exc.value.code, exc.value.message) == ("not_configured",
                                                    "No AI engine is configured on this server.")
+
+
+def test_track_needs_a_prompt_run_per_engine(website, user, engines, scans, monkeypatch):
+    idea = an_idea(website)
+    monkeypatch.setattr("core.ai_tracking.effective_ai_cap", lambda u: 3.0)
+    monkeypatch.setattr("core.ai_tracking.month_to_date_cost", lambda u: 2.99)
+    with pytest.raises(CanseeException) as exc:
+        prompt_ideas.track(website, user, idea, {"ai_usd_max": "0.0600"})
+    # A free account's allowance is never put in dollars.
+    assert (exc.value.code, exc.value.message) == (
+        "insufficient_allowance", prompt_runs.ALLOWANCE_SHORT_FREE)
+    monkeypatch.setattr("core.ai_tracking.month_to_date_cost", lambda u: 0.0)
+    engines_n = len(prompt_ideas.configured_engines())
+    assert prompt_ideas.track_block(user, website)["prompt_runs"]["needed"] == engines_n
+    use_runs(user, 20 - engines_n + 1, website)
+    prompts = Prompt.objects.count()
+    with pytest.raises(CanseeException) as exc:
+        prompt_ideas.track(website, user, idea, {"ai_usd_max": "0.0600"})
+    assert (exc.value.code, exc.value.status_code) == ("insufficient_prompt_runs", 403)
+    assert exc.value.details["needed"] == engines_n
+    assert Prompt.objects.count() == prompts
 
 
 def test_a_prompt_allowance_refusal_leaves_nothing(website, user, engines, monkeypatch):

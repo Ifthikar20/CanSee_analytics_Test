@@ -277,11 +277,11 @@ def test_rerun_refusals(user, chat, swarm, held, settings, website):
     spend(user, 0.05)
     resp = api.post(rerun_url(swarm), {"scope": "all"}, format="json")
     assert resp.status_code == 403
+    # A free account's allowance is a hidden backstop: no dollars.
     assert error(resp) == {
         "code": "insufficient_allowance",
-        "message": "Not enough AI allowance: this re-run needs up to $0.06 and $0.05 of the "
-                   "$0.10 monthly allowance is left.",
-        "details": {"need_usd": 0.06, "left_usd": 0.05, "cap_usd": 0.1},
+        "message": "This needs more of this month's free AI allowance than is left. "
+                   "Choose fewer prompts or engines.",
     }
     # A single Google page costs no AI allowance.
     one_page = api.post(rerun_url(swarm), {"scope": "task", "task_id": "google.p1.page1"},
