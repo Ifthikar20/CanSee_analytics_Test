@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAgentUiStore } from '@/stores/agentUi'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import ProjectMenu from '../ProjectMenu.vue'
 import { SITES, makeShellRouter } from './__fixtures__/shellRouter'
 
@@ -105,5 +106,45 @@ describe('ProjectMenu', () => {
 
     await choose(wrapper, 'Project settings')
     await vi.waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/settings/project'))
+  })
+})
+
+describe('ProjectMenu help', () => {
+  function signIn() {
+    const auth = useAuthStore()
+    auth.user = { id: 7 }
+    auth.session = { user: { id: 7 }, org: null, onboarding: { needs_onboarding: false } }
+  }
+  const hint = () => document.body.querySelector('.cs-hint[data-hint="shell.project"]')
+
+  it('says what a project is in the chip tooltip', async () => {
+    const { wrapper } = await setup('/projects/w1/analytics')
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    wrapper.find('button.shell-chip').element.focus()
+    await flushPromises()
+    expect(document.body.querySelector('.ag-tooltip').textContent).toContain('A project is one website.')
+  })
+
+  it('points the chip out on the board after the Ask AI tip, and the menu still opens in place', async () => {
+    localStorage.setItem('cs-hints-v1:7', JSON.stringify({ seen: ['board.ask-ai'], skipped: false }))
+    const { wrapper } = await setup('/projects/w1/analytics')
+    signIn()
+    await flushPromises()
+    expect(hint().querySelector('.cs-hint-title').textContent).toBe('Your project')
+
+    await wrapper.find('button.shell-chip').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    const menu = document.body.querySelector('.ag-portal.ag-menu')
+    expect(menu).not.toBeNull()
+    // Anchored to the chip: reka leaves a menu without an anchor at -200%.
+    expect(menu.parentElement.getAttribute('style')).not.toContain('-200%')
+  })
+
+  it('does not point the chip out away from the board', async () => {
+    localStorage.setItem('cs-hints-v1:7', JSON.stringify({ seen: ['board.ask-ai'], skipped: false }))
+    await setup('/projects/w1/agent')
+    signIn()
+    await flushPromises()
+    expect(hint()).toBeNull()
   })
 })

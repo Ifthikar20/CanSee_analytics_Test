@@ -36,7 +36,7 @@ async function setup(component, path, props) {
   })
   await router.push(path)
   await router.isReady()
-  return mount(component, { props, global: { plugins: [router] } })
+  return mount(component, { props, global: { plugins: [router] }, attachTo: document.body })
 }
 
 beforeEach(() => {
@@ -115,5 +115,24 @@ describe('SidebarNav', () => {
     const w = await setup(SidebarNav, '/agent/projects', { websiteId: null })
     expect(w.findAll('a.ag-nav-row').map((a) => a.text())).toEqual(['Projects'])
     expect(w.findAll('[aria-disabled="true"]')).toHaveLength(8)
+  })
+
+  it('keeps a disabled section focusable, with why it is off', async () => {
+    const w = await setup(SidebarNav, '/agent/projects', { websiteId: null })
+    const off = w.findAll('.ag-nav-row.is-disabled')
+    expect(off).toHaveLength(8)
+    for (const row of off) {
+      expect(row.attributes('tabindex')).toBe('0')
+      expect(document.getElementById(row.attributes('aria-describedby'))?.textContent).toBe('Pick a project first.')
+    }
+  })
+
+  it('says what each workspace section holds in its tooltip', async () => {
+    const w = await setup(SidebarNav, '/projects/w1/agent', { websiteId: 'w1' })
+    const row = w.findAll('a.ag-nav-row').find((a) => a.text() === 'Findings')
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    row.element.focus()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(document.body.querySelector('.ag-tooltip').textContent).toContain('Issues and opportunities from research')
   })
 })

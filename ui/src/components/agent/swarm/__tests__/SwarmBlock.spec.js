@@ -66,6 +66,14 @@ function mountBlock(props = {}) {
 const rowByLabel = (w, label) => w.findAll('.ag-swarm-row').find((r) => r.find('.ag-swarm-row-label').text() === label)
 const catRows = (w) => w.findAll('.ag-swarm-cat-row')
 
+// Focus as from the keyboard: after a click, :focus-visible (which the
+// tooltip opens on) needs a key press first.
+async function keyboardFocus(wrapper) {
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+  wrapper.element.focus()
+  await flushPromises()
+}
+
 function menuItem(text) {
   return [...document.body.querySelectorAll('[role="menuitem"]')].find((el) => el.textContent.includes(text)) || null
 }
@@ -319,6 +327,29 @@ describe('SwarmBlock rows', () => {
 })
 
 describe('SwarmBlock re-run', () => {
+  it('keeps a busy Re-run all agents focusable, with the reason in a tooltip, not title=', async () => {
+    const w = mountBlock({ live: false, busy: true, message: { ...MESSAGE, status: 'interrupted' } })
+    const again = w.find('.ag-swarm-rerun-all')
+    expect(again.attributes('aria-disabled')).toBe('true')
+    expect(again.attributes('disabled')).toBeUndefined()
+    expect(again.attributes('title')).toBeUndefined()
+    await keyboardFocus(again)
+    expect(document.body.querySelector('.ag-tooltip').textContent).toContain('Wait for the current reply to finish.')
+    await again.trigger('click')
+    await flushPromises()
+    expect(fakeAgent.rerunSwarm).not.toHaveBeenCalled()
+  })
+
+  it('explains the research agents in a help tip beside the header', async () => {
+    const w = mountBlock({ part: finishedPart(), live: false })
+    const help = w.find('.ag-swarm-head-help button')
+    expect(help.attributes('aria-label')).toBe('About the research agents')
+    // Outside the toggle: a button inside a button would be invalid.
+    expect(w.find('.ag-swarm-toggle .cs-helptip').exists()).toBe(false)
+    const desc = document.getElementById(help.attributes('aria-describedby')).textContent
+    expect(desc).toContain('Research agents work in parallel')
+  })
+
   it('re-runs all agents or one category from the header menu', async () => {
     const w = mountBlock({ part: finishedPart(), live: false })
     await openRerunMenu(w)
@@ -367,8 +398,12 @@ describe('SwarmBlock re-run', () => {
 
     await rowByLabel(w, 'Google page 1').trigger('click')
     const button = w.findAll('.ag-swarm-detail-actions button').find((b) => b.text() === 'Re-run this agent')
-    expect(button.attributes('disabled')).toBeDefined()
-    expect(button.attributes('title')).toBe('Wait for the current reply to finish.')
+    // Off but focusable, with the reason in a tooltip rather than title=.
+    expect(button.attributes('aria-disabled')).toBe('true')
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(button.attributes('title')).toBeUndefined()
+    await keyboardFocus(button)
+    expect(document.body.querySelector('.ag-tooltip').textContent).toContain('Wait for the current reply to finish.')
     await button.trigger('click')
     expect(fakeAgent.rerunSwarm).not.toHaveBeenCalled()
 

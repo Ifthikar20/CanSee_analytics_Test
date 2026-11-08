@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RouterLinkStub, enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { nextTick, reactive } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 import { SERP_TAB, SWARM_ID, categories, swarmTable, tablePart } from './__fixtures__/swarmParts.js'
 
 const fakeAgent = reactive({})
@@ -16,6 +17,8 @@ vi.mock('@/composables/useToast', () => ({ useToast: () => toast }))
 vi.mock('@/lib/agent/download', async (importOriginal) => ({ ...(await importOriginal()), downloadText: vi.fn() }))
 
 const { default: SwarmTable } = await import('../SwarmTable.vue')
+const { useAuthStore } = await import('@/stores/auth')
+const { loadHintState } = await import('@/lib/help/hints')
 const { downloadText } = await import('@/lib/agent/download')
 
 enableAutoUnmount(afterEach)
@@ -28,6 +31,9 @@ function reset(target, fields) {
 }
 
 beforeEach(() => {
+  // The first-visit hint store (real; signed out unless a test signs in).
+  localStorage.clear()
+  setActivePinia(createPinia())
   reset(fakeAgent, {
     websiteId: 'w1',
     status: { swarm: { enabled: true } },
@@ -193,6 +199,44 @@ describe('SwarmTable sorting and cells', () => {
 })
 
 describe('SwarmTable findings', () => {
+  it('explains the checkbox column with a visible help icon', () => {
+    const w = render()
+    const head = w.find('thead th.ag-st-sel')
+    expect(head.find('.ag-st-sr').text()).toBe('Add to findings')
+    const help = head.find('button.cs-helptip')
+    expect(help.attributes('aria-label')).toBe('What adding to findings does')
+    expect(document.getElementById(help.attributes('aria-describedby')).textContent).toBe(
+      "Tick rows to add them to Findings, the project's list of issues to fix.",
+    )
+  })
+
+  it('points the column out once, while a row can still be ticked', async () => {
+    const auth = useAuthStore()
+    auth.user = { id: 5 }
+    auth.session = { user: { id: 5 }, org: null, onboarding: { needs_onboarding: false } }
+    const w = render()
+    await flushPromises()
+    const hint = document.body.querySelector('.cs-hint[data-hint="agent.findings-select"]')
+    expect(hint).not.toBeNull()
+    ;[...hint.querySelectorAll('button')].find((b) => b.textContent === 'Got it').click()
+    await flushPromises()
+    expect(document.body.querySelector('.cs-hint')).toBeNull()
+    expect(loadHintState('5').seen).toEqual(['agent.findings-select'])
+    w.unmount()
+
+    // Every row already added: nothing to tick, no hint.
+    localStorage.clear()
+    setActivePinia(createPinia())
+    const again = useAuthStore()
+    again.user = { id: 5 }
+    again.session = { user: { id: 5 }, org: null, onboarding: { needs_onboarding: false } }
+    fakeFindings.added[`${SWARM_ID}:prompts:p1`] = 'f1'
+    fakeFindings.added[`${SWARM_ID}:prompts:p3`] = 'f3'
+    render()
+    await flushPromises()
+    expect(document.body.querySelector('.cs-hint')).toBeNull()
+  })
+
   it('offers a checkbox only on rows with a finding draft, and marks rows already added', async () => {
     fakeFindings.added[`${SWARM_ID}:prompts:p3`] = 'f9'
     const w = render()

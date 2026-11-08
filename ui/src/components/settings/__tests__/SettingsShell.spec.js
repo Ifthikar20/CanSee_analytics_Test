@@ -45,3 +45,31 @@ describe('SettingsShell: Autopilot', () => {
         expect(wrapper.find('.ss-crumb-current').text()).toBe('Autopilot')
     })
 })
+
+describe('SettingsShell: help', () => {
+    it('says what Autopilot, Connections and Brand facts hold, in side tooltips', async () => {
+        const pinia = createPinia()
+        setActivePinia(pinia)
+        const router = createRouter({
+            history: createMemoryHistory(),
+            routes: [
+                { path: '/settings/usage-dashboard', name: 'settings-command-center', component: Blank },
+                { path: '/:any(.*)*', component: Blank },
+            ],
+        })
+        await router.push('/settings/autopilot')
+        const wrapper = mount(SettingsShell, { props: { active: 'autopilot' }, global: { plugins: [pinia, router] }, attachTo: document.body })
+        await flushPromises()
+        const tipOf = async (label) => {
+            const link = wrapper.find('aside.ss-nav').findAll('.ss-nav-item').find((a) => a.text() === label)
+            document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+            link.element.focus()
+            await flushPromises()
+            return document.body.querySelector('.ag-tooltip')?.textContent || ''
+        }
+        expect(await tipOf('Autopilot')).toContain('The daily run of your tracked prompts')
+        expect(await tipOf('Connections')).toContain('Search Console, your traffic source')
+        expect(await tipOf('Brand facts')).toContain('Fact check tests AI answers against them')
+        wrapper.unmount()
+    })
+})
