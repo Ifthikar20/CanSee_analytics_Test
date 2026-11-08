@@ -6,6 +6,7 @@ import { RouterView, createMemoryHistory, createRouter } from 'vue-router'
 import { useAgentUiStore } from '@/stores/agentUi'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
+import { useShellTakeover } from '@/lib/shell/takeover'
 import shellSource from '../AppShell.vue?raw'
 
 const fakeAgent = reactive({})
@@ -52,6 +53,15 @@ const FocusingPage = defineComponent({
   },
 })
 
+// A page covering the whole screen, as first-run onboarding does.
+const takeoverOn = ref(true)
+const TakeoverPage = defineComponent({
+  setup() {
+    useShellTakeover(takeoverOn)
+    return () => h('div', { class: 'test-page test-takeover' }, [h('button', 'Next')])
+  },
+})
+
 const mounted = []
 let wide = true
 const realMatchMedia = window.matchMedia
@@ -69,7 +79,10 @@ function makeRouter() {
         path: '/dashboard',
         component: AppShell,
         meta: { section: 'analytics' },
-        children: [{ path: '', name: 'dashboard', component: Page, meta: { title: 'Analytics' } }],
+        children: [
+          { path: '', name: 'dashboard', component: Page, meta: { title: 'Analytics' } },
+          { path: 'takeover', name: 'takeover', component: TakeoverPage },
+        ],
       },
       {
         path: '/projects/:websiteId',
@@ -501,5 +514,41 @@ describe('AppShell state', () => {
     expect(document.title).toBe('Analytics — Acme — Cansee')
     await go(router, '/dashboard')
     expect(document.title).toBe('Analytics — Cansee')
+  })
+})
+
+describe('AppShell: a full-screen page', () => {
+  const skip = () => document.body.querySelector('.app-skip')
+  const bar = () => document.body.querySelector('.shell-bar')
+
+  beforeEach(() => {
+    takeoverOn.value = true
+  })
+
+  it('makes the header and the skip link inert and hidden while it shows', async () => {
+    await setup('/dashboard/takeover')
+    expect(bar().hasAttribute('inert')).toBe(true)
+    expect(bar().getAttribute('aria-hidden')).toBe('true')
+    expect(skip().hasAttribute('inert')).toBe(true)
+    expect(skip().getAttribute('aria-hidden')).toBe('true')
+  })
+
+  it('gives the header back when it stops covering the screen or is left', async () => {
+    const { router } = await setup('/dashboard/takeover')
+    takeoverOn.value = false
+    await flushPromises()
+    expect(bar().hasAttribute('inert')).toBe(false)
+    takeoverOn.value = true
+    await flushPromises()
+    expect(bar().hasAttribute('inert')).toBe(true)
+    await go(router, '/dashboard')
+    expect(bar().hasAttribute('inert')).toBe(false)
+    expect(skip().hasAttribute('aria-hidden')).toBe(false)
+  })
+
+  it('leaves the header alone on every other page', async () => {
+    await setup('/dashboard')
+    expect(bar().hasAttribute('inert')).toBe(false)
+    expect(skip().hasAttribute('inert')).toBe(false)
   })
 })

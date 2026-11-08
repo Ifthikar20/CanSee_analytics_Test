@@ -29,6 +29,7 @@ const { useAppStore } = await import('@/stores/app')
 const { useAuthStore } = await import('@/stores/auth')
 const { setLastProject } = await import('@/lib/agent/storage')
 const { default: AnalyticsEntryPage } = await import('../AnalyticsEntryPage.vue')
+const { SHELL_TAKEOVER } = await import('@/lib/shell/takeover')
 
 const Blank = defineComponent({ render: () => h('div', { class: 'stub-elsewhere' }) })
 const SITES = [
@@ -37,7 +38,7 @@ const SITES = [
 ]
 const mounted = []
 
-async function setup(path = '/dashboard', { onboarding = false } = {}) {
+async function setup(path = '/dashboard', { onboarding = false, provide = {} } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const auth = useAuthStore()
@@ -53,7 +54,7 @@ async function setup(path = '/dashboard', { onboarding = false } = {}) {
   })
   await router.push(path)
   await router.isReady()
-  const wrapper = mount(RouterView, { global: { plugins: [pinia, router] }, attachTo: document.body })
+  const wrapper = mount(RouterView, { global: { plugins: [pinia, router], provide }, attachTo: document.body })
   mounted.push(wrapper)
   await flushPromises()
   return { wrapper, router, auth, app: useAppStore() }
@@ -131,5 +132,27 @@ describe('AnalyticsEntryPage', () => {
     answer({ data: SITES })
     await flushPromises()
     expect(second.router.currentRoute.value.name).toBe('agent-home')
+  })
+})
+
+describe('AnalyticsEntryPage: the shell behind onboarding', () => {
+  it('asks the shell to hide its header while the wizard shows, and gives it back after', async () => {
+    const set = vi.fn()
+    const { wrapper, auth } = await setup('/dashboard', { onboarding: true, provide: { [SHELL_TAKEOVER]: { set } } })
+    expect(set).toHaveBeenLastCalledWith(expect.any(Object), true)
+    list.mockResolvedValue({ data: [] })
+    auth.session = { onboarding: { needs_onboarding: false } }
+    await flushPromises()
+    expect(set).toHaveBeenLastCalledWith(expect.any(Object), false)
+    wrapper.unmount()
+    mounted.pop()
+    expect(set).toHaveBeenLastCalledWith(expect.any(Object), false)
+  })
+
+  it('does not hide the header when there is no wizard', async () => {
+    const set = vi.fn()
+    list.mockResolvedValue({ data: [] })
+    await setup('/dashboard', { provide: { [SHELL_TAKEOVER]: { set } } })
+    expect(set).not.toHaveBeenCalledWith(expect.any(Object), true)
   })
 })
