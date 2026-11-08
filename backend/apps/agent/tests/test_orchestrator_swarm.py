@@ -79,7 +79,7 @@ check_ai_engines or inspect_page for the same prompts in the same turn.
 
 
 def test_the_prompt_version_is_bumped():
-    assert orchestrator.VERSION == "2026-11-08.2"
+    assert orchestrator.VERSION == "2026-11-08.3"
 
 
 def test_the_research_agents_section_follows_the_ground_rules():
@@ -111,7 +111,7 @@ def test_research_swarm_is_offered_only_while_enabled(settings):
     enabled = get_or_create_snapshot()
     names = [t["name"] for t in json.loads(enabled.tools_json)]
     assert "research_swarm" in names and names == sorted(names)
-    assert enabled.version == "2026-11-08.2"
+    assert enabled.version == "2026-11-08.3"
 
     settings.AGENT_SWARM_ENABLED = False
     disabled = get_or_create_snapshot()
