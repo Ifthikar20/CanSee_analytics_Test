@@ -6,6 +6,7 @@ Test suites for Cansee, kept outside the application repositories.
 | --- | --- | --- |
 | `backend/` | [CanSee_analytics_App](https://github.com/Ifthikar20/CanSee_analytics_App) (Django, DRF, Celery) | pytest |
 | `ui/` | [Cansee_analytics_UI_APP](https://github.com/Ifthikar20/Cansee_analytics_UI_APP) (Vue 3, Vite) | Vitest |
+| `console/` | [CanSee_console_app](https://github.com/Ifthikar20/CanSee_console_app) (Node.js, Express, Vue 3) | Vitest, supertest |
 | `scripts/` | Helpers that copy a suite into an app checkout and run it | bash |
 | `docs/` | Known failures and notes | |
 
@@ -74,12 +75,27 @@ scripts/run-ui-tests.sh ../Cansee_analytics_UI_APP src/lib/charts
 `__fixtures__/`, and `src/test/setup.js`); the UI's `.gitignore` ignores the
 copies.
 
+## Running the console tests
+
+`console/` mirrors the console repository's paths: `console/tests/` becomes
+`tests/` in a console checkout, which the console's `.gitignore` ignores.
+Server tests (`tests/server/`) use supertest against the Express app with a
+fake backend, so nothing listens on a port of its own; UI unit tests
+(`tests/client/`) use Vitest, with jsdom for component tests.
+
+Prerequisite: `npm ci` in the console checkout. Then, from this repository:
+
+```bash
+scripts/sync-console-tests.sh ../cansee_console_app
+(cd ../cansee_console_app && npm test)
+```
+
 ## Changing tests
 
 Edit tests here, not in the app checkouts. The sync scripts mirror this
 repository into a checkout: they delete the checkout's test folders (and the
-backend's root `conftest.py`) and copy this repository's versions in, so a test
-deleted here disappears there too. Any edit made in a checkout is lost on the
+backend's root `conftest.py`, the console's `tests/`) and copy this
+repository's versions in, so a test deleted here disappears there too. Any edit made in a checkout is lost on the
 next sync. The scripts refuse to run if any of those files are tracked by the
 app repository.
 
