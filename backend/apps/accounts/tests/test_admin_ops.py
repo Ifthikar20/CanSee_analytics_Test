@@ -13,11 +13,20 @@ USERS = "/api/v1/internal/admin/users/"
 KEY = "test-ops-key"
 
 
+ACCOUNTS = "/api/v1/internal/admin/accounts/"
+ENDPOINTS = [OVERVIEW, USERS, ACCOUNTS]
+
+
 @pytest.fixture
 def ops_settings(settings):
+    from apps.accounts.api.v1.admin_views import InternalAdminView
+
     settings.ADMIN_OPS_KEY = KEY
     settings.ADMIN_OPS_ALLOWED_CIDRS = ["127.0.0.0/8"]
-    return settings
+    # The per-IP window is process state: start every test with it empty.
+    InternalAdminView._requests.clear()
+    yield settings
+    InternalAdminView._requests.clear()
 
 
 def _client(key=KEY):
@@ -53,6 +62,51 @@ class TestKeyGate:
     def test_empty_cidr_list_denies_everyone(self, ops_settings):
         ops_settings.ADMIN_OPS_ALLOWED_CIDRS = []
         assert _client().get(OVERVIEW).status_code == 404
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("path", ENDPOINTS)
+class TestGateOnEveryEndpoint:
+    """Every failure is a 404 with the same body, on every endpoint."""
+
+    def test_the_key_from_an_allowed_ip_gets_in(self, ops_settings, path):
+        assert _client().get(path).status_code == 200
+
+    @pytest.mark.parametrize("key", [None, "", "nope", KEY + "x", KEY[:-1], KEY.upper(),
+                                     "test-ops-k\u00e9y"])
+    def test_missing_or_wrong_key_is_404(self, ops_settings, path, key):
+        resp = _client(key=key).get(path)
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "not_found"
+
+    @pytest.mark.parametrize("ip", ["203.0.113.9", "10.0.0.5", "::1", "not-an-ip", ""])
+    def test_disallowed_ip_is_404_even_with_the_key(self, ops_settings, path, ip):
+        assert _client().get(path, REMOTE_ADDR=ip).status_code == 404
+
+    def test_forwarded_header_does_not_count(self, ops_settings, path):
+        resp = _client().get(
+            path, REMOTE_ADDR="203.0.113.9", HTTP_X_FORWARDED_FOR="127.0.0.1",
+        )
+        assert resp.status_code == 404
+
+    def test_surface_off_without_a_key_setting(self, ops_settings, path):
+        ops_settings.ADMIN_OPS_KEY = ""
+        assert _client(key="").get(path).status_code == 404
+
+    def test_writes_are_not_allowed(self, ops_settings, path):
+        assert _client().post(path, {}).status_code == 405
+
+
+@pytest.mark.django_db
+def test_rate_limit_per_ip(ops_settings):
+    from apps.accounts.api.v1.admin_views import InternalAdminView
+
+    client = _client()
+    for _ in range(InternalAdminView._MAX_PER_WINDOW):
+        assert client.get(OVERVIEW).status_code == 200
+    assert client.get(OVERVIEW).status_code == 429
+    # Another allowed address has its own window.
+    assert client.get(OVERVIEW, REMOTE_ADDR="127.0.0.2").status_code == 200
 
 
 @pytest.mark.django_db
