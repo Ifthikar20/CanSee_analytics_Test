@@ -227,3 +227,29 @@ def test_truncated_json_is_repaired():
         items, _ = generate_from_context("podcast about health Broadway NY 6pm")
     assert len(items) >= 1
     assert "company_name" in items[0]["template_variables"]
+
+
+def test_truncated_array_keeps_every_complete_item_in_order():
+    from apps.prompt_library.services.context_generator import _extract_json_array
+
+    text = (
+        '```json\n[{"prompt_text": "first {{ city }} item"}, '
+        '{"prompt_text": "second item with } brace"},\n'
+        '{"prompt_text": "cut off mid'
+    )
+    assert _extract_json_array(text) == [
+        {"prompt_text": "first {{ city }} item"},
+        {"prompt_text": "second item with } brace"},
+    ]
+
+
+def test_array_followed_by_prose_is_read_in_full():
+    from apps.prompt_library.services.context_generator import _extract_json_array
+
+    assert _extract_json_array('[{"a": 1}, {"b": 2}] Hope this helps!') == [{"a": 1}, {"b": 2}]
+
+
+def test_unrepairable_text_yields_nothing():
+    from apps.prompt_library.services.context_generator import _extract_json_array
+
+    assert _extract_json_array('[{"prompt_text": "never closed') == []

@@ -93,3 +93,21 @@ def test_tag_prompts_caches_repeat_lookups(settings):
         tag_prompts(["how many planets are there"])
 
     assert calls["n"] == 1
+
+
+@pytest.mark.parametrize("prompt", [
+    "best lead generation tools for agencies",
+    "power generation companies in texas",
+])
+def test_heuristic_generation_alone_is_not_people_society(prompt):
+    assert _heuristic_category(prompt) != "people_society"
+
+
+@pytest.mark.parametrize("prompt", [
+    "apps popular with gen z",
+    "what does generation z expect from banks",
+    "millennials and home buying",
+    "generational wealth gap in america",
+])
+def test_heuristic_demographic_generations_are_people_society(prompt):
+    assert _heuristic_category(prompt) == "people_society"

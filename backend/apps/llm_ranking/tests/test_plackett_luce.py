@@ -84,3 +84,11 @@ class TestRankingsFromResults:
         )]
         rankings = rankings_from_results(results, target_name="Cansee")
         assert rankings == [["Amplitude", "Heap"]]
+
+
+def test_brand_seen_only_alone_is_left_out():
+    # "C" only appears in single-brand rankings, so it was never compared
+    # and must not keep the untouched starting strength of 1.0.
+    s = fit_plackett_luce([["A", "B"], ["C"], ["A", "B"], ["C"]])
+    assert set(s) == {"A", "B"}
+    assert s["A"] == 1.0
