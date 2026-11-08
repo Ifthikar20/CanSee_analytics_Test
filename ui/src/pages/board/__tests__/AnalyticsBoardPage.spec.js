@@ -531,6 +531,76 @@ describe('AnalyticsBoardPage', () => {
       expect(wrapper.find('[data-setup-panel]').exists()).toBe(true)
     })
 
+    // The ranking source as useBoardSource gives it: reactive, as the real one is.
+    const rankingSource = (data) => {
+      const source = { data: ref(data), loading: ref(false), failure: ref(null) }
+      sources.useBoardSource.mockImplementation(() => source)
+      return source
+    }
+    const stepKeys = (wrapper) => wrapper.findAll('[data-setup-panel] [data-step]').map((s) => s.attributes('data-step'))
+
+    it("reads whether Autopilot runs from the board's ranking source", async () => {
+      firstLanding()
+      rankingSource(null)
+      api.get.mockResolvedValue(payload())
+      await setup()
+      await settle()
+      expect(sources.useBoardSource).toHaveBeenCalledWith('ranking')
+    })
+
+    it('leaves Turn on Autopilot out of the next steps when Autopilot runs', async () => {
+      firstLanding()
+      rankingSource({ autopilot: { enabled: true } })
+      api.get.mockResolvedValue(payload())
+      const { wrapper } = await setup()
+      await settle()
+      expect(wrapper.find('[data-setup-panel]').exists()).toBe(true)
+      expect(wrapper.find('[data-setup-panel] [data-step="autopilot"]').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Turn on Autopilot')
+      expect(stepKeys(wrapper)).toEqual(['research', 'prompts'])
+    })
+
+    it('offers Turn on Autopilot when Autopilot is off, and it leads to the Autopilot settings', async () => {
+      firstLanding()
+      rankingSource({ autopilot: { enabled: false } })
+      api.get.mockResolvedValue(payload())
+      const { wrapper, router } = await setup()
+      await settle()
+      expect(stepKeys(wrapper)).toEqual(['research', 'autopilot', 'prompts'])
+      const step = wrapper.find('[data-setup-panel] [data-step="autopilot"]')
+      expect(step.text()).toContain('Turn on Autopilot')
+      const link = step.find('a')
+      expect(link.attributes('href')).toBe(router.resolve({ name: 'settings-autopilot' }).href)
+    })
+
+    it.each([
+      ['no ranking data yet', null],
+      ['ranking data without Autopilot', { rows: [] }],
+      ['an Autopilot state that is not a yes or no', { autopilot: { enabled: 'yes' } }],
+    ])('offers Turn on Autopilot with %s', async (_label, data) => {
+      firstLanding()
+      rankingSource(data)
+      api.get.mockResolvedValue(payload())
+      const { wrapper } = await setup()
+      await settle()
+      expect(wrapper.find('[data-setup-panel] [data-step="autopilot"]').exists()).toBe(true)
+    })
+
+    it('drops Turn on Autopilot once the ranking source says Autopilot runs, and brings it back when it stops', async () => {
+      firstLanding()
+      const source = rankingSource(null)
+      api.get.mockResolvedValue(payload())
+      const { wrapper } = await setup()
+      await settle()
+      expect(stepKeys(wrapper)).toContain('autopilot')
+      source.data.value = { autopilot: { enabled: true } }
+      await settle()
+      expect(stepKeys(wrapper)).not.toContain('autopilot')
+      source.data.value = { autopilot: { enabled: false } }
+      await settle()
+      expect(stepKeys(wrapper)).toContain('autopilot')
+    })
+
     it('stays closed on a project where it was closed', async () => {
       firstLanding('w1', { dismissed: true })
       api.get.mockResolvedValue(payload())
