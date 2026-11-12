@@ -113,8 +113,18 @@ describe('askAgent', () => {
       reports: 'Reports',
       sources: 'Citations',
     })
-    // 21 widgets, the Agents and Reports pages and the legacy key; the Overview is gone.
-    expect(Object.keys(ASK_FROM_LABELS)).toHaveLength(24)
+    // The seven newer blocks are labelled by their titles too.
+    expect(ASK_FROM_LABELS).toMatchObject({
+      watch: 'Watch',
+      'asked-answered': 'Asked and answered',
+      'answer-rank': 'Rank in AI answers',
+      'visibility-score': 'Visibility score',
+      'prompt-runs': 'Prompt runs',
+      'next-steps': 'Next steps',
+      'latest-report': 'Latest report',
+    })
+    // 28 blocks, the Agents and Reports pages and the legacy key; the Overview is gone.
+    expect(Object.keys(ASK_FROM_LABELS)).toHaveLength(31)
     expect(ASK_FROM_LABELS.overview).toBeUndefined()
   })
 

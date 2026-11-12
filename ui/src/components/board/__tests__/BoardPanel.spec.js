@@ -143,6 +143,11 @@ describe('BoardPanel', () => {
     const title = aside.find('h2#bd-panel-title')
     expect(aside.attributes('aria-labelledby')).toBe('bd-panel-title')
     expect(title.text()).toBe('AI crawlers')
+    // The block's code sits before the title, as under its card; the title alone names the panel.
+    const code = aside.find('.bd-panel-head .bd-panel-code')
+    expect(code.text()).toBe('CNS_19')
+    expect(code.attributes('aria-hidden')).toBe('true')
+    expect(code.element.nextElementSibling).toBe(title.element)
     expect(title.attributes('tabindex')).toBe('-1')
     expect(document.activeElement).toBe(title.element)
     expect(aside.find('.stub-view-props').text()).toBe('w1|crawlers|true')

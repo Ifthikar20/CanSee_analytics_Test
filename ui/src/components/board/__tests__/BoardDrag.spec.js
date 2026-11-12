@@ -11,14 +11,14 @@ vi.mock('@/api/board', () => ({ default: api }))
 // The layout jsdom does not have: a 1200px board in the wide mode, 300px
 // rows and 16px gaps, laid out by flowLayout from the cells' DOM order. The
 // scroll container and the visible band are set per test.
-const geo = vi.hoisted(() => ({ scroller: null, band: null, reveal: null }))
+const geo = vi.hoisted(() => ({ scroller: null, band: null, reveal: null, width: 1200 }))
 vi.mock('@/composables/board/boardGeometry', async () => {
   const { flowLayout } = await import('@/lib/board/flow')
   const COL = (1200 - 11 * 16) / 12
   const sizeOf = (li) => ['third', 'half', 'full'].find((s) => li.classList.contains(`is-${s}`))
   return {
     scrollParentOf: () => geo.scroller,
-    gridBox: () => ({ left: 0, top: 0, right: 1200, bottom: 2000, width: 1200, height: 2000 }),
+    gridBox: () => ({ left: 0, top: 0, right: geo.width, bottom: 2000, width: geo.width, height: 2000 }),
     readCells(grid) {
       const cells = [...grid.children].filter((el) => el.matches('li.bd-cell'))
       const items = cells.map((li) => ({ key: li.dataset.widget, size: sizeOf(li) }))
@@ -92,7 +92,8 @@ function setPhone(value) {
   media.listeners.forEach((fn) => fn({ matches: value, media: PHONE }))
 }
 
-async function setup(widgets = FOUR, { pending = false } = {}) {
+// Three columns of thirds unless a test asks for another density.
+async function setup(widgets = FOUR, { pending = false, columns = 3 } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().user = { id: 7 }
@@ -114,7 +115,7 @@ async function setup(widgets = FOUR, { pending = false } = {}) {
       return () =>
         h('div', { class: 'bd' }, [
           h('div', { class: 'bd-top', 'data-bd-sticky': '' }),
-          h(BoardGrid, { widgets: store.layoutOf('w1').widgets, pending }),
+          h(BoardGrid, { widgets: store.layoutOf('w1').widgets, pending, columns }),
         ])
     },
   })
@@ -173,6 +174,7 @@ beforeEach(() => {
   geo.scroller = { scrollTop: 0 }
   geo.band = { top: -10000, bottom: 10000 }
   geo.reveal = vi.fn()
+  geo.width = 1200
   frames.queue.clear()
   frames.now = 0
   vi.stubGlobal('requestAnimationFrame', (cb) => {
@@ -566,6 +568,55 @@ describe('moving a card with the keyboard', () => {
     await flushPromises()
     expect(order(wrapper)).toEqual(keysOf(SIX))
     expect(said(ui)).toBe('Sentiment, position 2 of 6.')
+  })
+
+  it("reads rows by the board's density: four thirds are one row of a four-column board", async () => {
+    // Three columns: AI traffic sits under Traffic, so Sentiment can go down to that row.
+    const three = await setup(FOUR, { columns: 3 })
+    let g = grip(three.wrapper, 'sentiment')
+    g.focus()
+    press(g, ' ')
+    press(g, 'ArrowDown')
+    await flushPromises()
+    expect(order(three.wrapper)).toEqual(['traffic', 'citations', 'ai-traffic', 'sentiment'])
+    press(g, 'Escape')
+    await flushPromises()
+    while (mounted.length) mounted.pop().unmount()
+
+    // Four columns on a board too narrow for them: still three to a row.
+    const narrow = await setup(FOUR, { columns: 4 })
+    g = grip(narrow.wrapper, 'sentiment')
+    g.focus()
+    press(g, ' ')
+    press(g, 'ArrowDown')
+    await flushPromises()
+    expect(order(narrow.wrapper)).toEqual(['traffic', 'citations', 'ai-traffic', 'sentiment'])
+    press(g, 'Escape')
+    await flushPromises()
+    while (mounted.length) mounted.pop().unmount()
+
+    // Four columns on a wide board: the same four cards are one row, and there is nowhere to go down.
+    geo.width = 1400
+    const four = await setup(FOUR, { columns: 4 })
+    g = grip(four.wrapper, 'sentiment')
+    g.focus()
+    press(g, ' ')
+    press(g, 'ArrowDown')
+    await flushPromises()
+    expect(said(four.ui)).toBe('Sentiment is already in the bottom row.')
+    expect(order(four.wrapper)).toEqual(keysOf(FOUR))
+    press(g, 'ArrowUp')
+    expect(said(four.ui)).toBe('Sentiment is already in the top row.')
+    while (mounted.length) mounted.pop().unmount()
+
+    // Two columns: two rows of two, so Sentiment goes down under itself.
+    const two = await setup(FOUR, { columns: 2 })
+    g = grip(two.wrapper, 'sentiment')
+    g.focus()
+    press(g, ' ')
+    press(g, 'ArrowDown')
+    await flushPromises()
+    expect(order(two.wrapper)).toEqual(['traffic', 'citations', 'ai-traffic', 'sentiment'])
   })
 
   it('says when the card cannot go further', async () => {
