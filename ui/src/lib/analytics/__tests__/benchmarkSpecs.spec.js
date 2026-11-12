@@ -23,7 +23,7 @@ describe('brandTiles', () => {
     it('gives each brand its visibility, how often it was named and its colour', () => {
         const tiles = brandTiles(competitorsPayload())
         expect(tiles.map((t) => [t.label, t.value, t.hint, t.tone])).toEqual([
-            ['Notion', 33.3, 'Named in 40 of 120 answers', 'var(--viz-cat-1)'],
+            ['Notion', 33.3, 'Named in 40 of 120 answers', 'var(--viz-you)'],
             ['Evernote', 41.7, 'Named in 50 of 120 answers', 'var(--viz-cat-2)'],
             ['Obsidian', 5, 'Named in 6 of 120 answers', 'var(--viz-cat-3)'],
         ])

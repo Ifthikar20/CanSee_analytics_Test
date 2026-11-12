@@ -8,12 +8,6 @@ import { useAuthStore } from '@/stores/auth'
 import { useHelpStore } from '@/stores/help'
 
 vi.mock('/images/cansee-logo.png', () => ({ default: '/images/cansee-logo.png' }))
-// The animated backdrop plays videos jsdom cannot; it adds nothing here.
-vi.mock('@/components/onboarding/WatercolorBackdrop.vue', async () => {
-  const vue = await import('vue')
-  return { default: vue.defineComponent({ render: () => vue.h('div', { class: 'stub-backdrop' }) }) }
-})
-
 const { default: SupportPage } = await import('../SupportPage.vue')
 const supportSource = (await import('../SupportPage.vue?raw')).default
 
@@ -127,5 +121,15 @@ describe('SupportPage', () => {
     expect(style).toMatch(/--sp-muted: var\(--muted-foreground\)/)
     expect(style).not.toMatch(/--sp-bg: #fff/i)
     expect(style).not.toMatch(/--sp-fg: #0a0a0a/i)
+    // No literal colour at all: the accent and the page come from tokens.
+    expect(style).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+    expect(style).not.toMatch(/rgba?\(/)
+    expect(style).toMatch(/--sp-accent: var\(--signal-text\)/)
+  })
+
+  it('sits on the flat paper page, with no film behind it', () => {
+    expect(supportSource).not.toMatch(/WatercolorBackdrop|<video/)
+    const style = supportSource.slice(supportSource.indexOf('<style'))
+    expect(style).toMatch(/background: var\(--background\)/)
   })
 })

@@ -24,8 +24,9 @@ describe('buildChartConfig: lines and areas', () => {
     expect(chatgpt.pointRadius).toEqual([4, 0, 4, 0, 4])
     expect(claude.pointRadius).toEqual([0, 4, 0, 0, 0])
     expect(chatgpt.pointBorderColor).toBe('#ffffff')
-    expect(chatgpt.borderColor).toBe('#2a78d6')
-    expect(claude.borderColor).toBe('#eb6834')
+    // Series are ink and warm grays; no engine has a hue of its own.
+    expect(chatgpt.borderColor).toBe('#0b0b0b')
+    expect(claude.borderColor).toBe('#5f5e58')
     // A missing value stays a gap, never a zero.
     expect(chatgpt.data).toEqual([10, null, 30, null, 50])
   })
@@ -49,7 +50,7 @@ describe('buildChartConfig: lines and areas', () => {
 
   it('washes a single area at 10% and stacks stacked areas', () => {
     const one = buildChartConfig(time(), 'area', { hidden: ['claude'] })
-    expect(one.data.datasets[0]).toMatchObject({ fill: 'origin', backgroundColor: 'rgba(42, 120, 214, 0.1)' })
+    expect(one.data.datasets[0]).toMatchObject({ fill: 'origin', backgroundColor: 'rgba(11, 11, 11, 0.1)' })
     expect(one.data.datasets[1].hidden).toBe(true)
     const stacked = buildChartConfig(time({ stacked: true }), 'area')
     expect(stacked.data.datasets.map((d) => d.fill)).toEqual(['stack', 'stack'])
@@ -75,11 +76,11 @@ describe('buildChartConfig: bars and donuts', () => {
     datasets: [{ key: 'sov', label: 'Share', data: [18.2, 27.3, 13.6] }],
   })
 
-  it('caps bar thickness, rounds the data end and leaves a 2px surface gap where marks touch', () => {
+  it('caps bar thickness, keeps bar ends square and leaves a 2px surface gap where marks touch', () => {
     const cfg = buildChartConfig(brands, 'bar', { surface: '#0e0e10' })
     expect(cfg.data.datasets[0]).toMatchObject({
       maxBarThickness: 24,
-      borderRadius: 4,
+      borderRadius: 0,
       borderSkipped: 'start',
       borderWidth: { top: 0, right: 1, bottom: 0, left: 1 },
       borderColor: '#0e0e10',
@@ -136,7 +137,7 @@ describe('buildChartConfig: bars and donuts', () => {
 
   it('keeps the selected bar in the series colour and mutes the others', () => {
     const cfg = buildChartConfig(brands, 'hbar', { selected: 'notion' })
-    expect(cfg.data.datasets[0].backgroundColor).toEqual(['#2a78d6', '#a5a5a0', '#a5a5a0'])
+    expect(cfg.data.datasets[0].backgroundColor).toEqual(['#0b0b0b', '#cbcac4', '#cbcac4'])
     expect(cfg.options.indexAxis).toBe('y')
     expect(cfg.height).toBe(3 * 28 + 48)
   })
@@ -167,7 +168,7 @@ describe('buildChartConfig: bars and donuts', () => {
     const cfg = buildChartConfig(brands, 'doughnut', { surface: '#ffffff' })
     expect(cfg.component).toBe('doughnut')
     expect(cfg.options.cutout).toBe('62%')
-    expect(cfg.data.datasets[0].backgroundColor).toEqual(['#2a78d6', '#eb6834', '#1baf7a'])
+    expect(cfg.data.datasets[0].backgroundColor).toEqual(['#0b0b0b', '#5f5e58', '#a09f98'])
     expect(cfg.data.datasets[0]).toMatchObject({ borderWidth: 2, borderColor: '#ffffff' })
     expect(cfg.options.interaction.mode).toBe('nearest')
   })
@@ -185,7 +186,7 @@ describe('buildChartConfig: bars and donuts', () => {
     const cfg = buildChartConfig(spec, 'bar', { picked: 'answers' })
     expect(cfg.data.datasets).toHaveLength(1)
     expect(cfg.data.datasets[0].label).toBe('Answers')
-    expect(cfg.data.datasets[0].backgroundColor).toBe('#2a78d6')
+    expect(cfg.data.datasets[0].backgroundColor).toBe('#0b0b0b')
     expect(cfg.kind).toBe('count')
   })
 })

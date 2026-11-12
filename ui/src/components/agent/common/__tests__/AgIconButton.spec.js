@@ -26,7 +26,7 @@ describe('AgIconButton', () => {
     expect(button.attributes('data-x')).toBe('1')
     expect(button.classes()).toEqual(expect.arrayContaining(['ag-icon-btn', 'extra', 'is-ghost']))
     expect(button.attributes('style')).toContain('--ag-ib-size: 28px')
-    expect(button.attributes('style')).toContain('--ag-ib-radius: 6px')
+    expect(button.attributes('style')).toContain('--ag-ib-radius: var(--radius)')
     await button.trigger('click')
     expect(onClick).toHaveBeenCalledTimes(1)
   })
@@ -48,11 +48,13 @@ describe('AgIconButton', () => {
     expect(w.find('button').element).toBe(before)
   })
 
-  it('accepts named sizes and a circle shape', () => {
+  it('accepts named sizes, and stays square even for the circle shape', () => {
     const w = mount(AgIconButton, { props: { label: 'Send', size: 'md', shape: 'circle', tooltip: false } })
     const style = w.find('button').attributes('style')
     expect(style).toContain('--ag-ib-size: 32px')
-    expect(style).toContain('--ag-ib-radius: 999px')
+    // The design has no round or pill controls: every shape takes the radius token.
+    expect(style).toContain('--ag-ib-radius: var(--radius)')
+    expect(style).not.toMatch(/999px|50%/)
   })
 
   it('works as an as-child menu trigger', async () => {

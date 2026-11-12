@@ -40,7 +40,7 @@ async function render({ billingReady = true } = {}) {
     await router.push('/paywall')
     await router.isReady()
     const wrapper = mount(PaywallPage, {
-        global: { plugins: [pinia, router], stubs: { WatercolorBackdrop: true } },
+        global: { plugins: [pinia, router] },
     })
     await flushPromises()
     return { wrapper, router }

@@ -8,6 +8,7 @@ import {
   seqInk,
   seqToken,
   stableSlots,
+  tokenColor,
   withAlpha,
 } from '@/lib/charts/palette'
 import { normalizeVizSpec } from '@/lib/charts/spec'
@@ -41,9 +42,9 @@ describe('entityToken (contract 8c)', () => {
     expect(entityToken('operator:common-crawl', 1)).toBe('--viz-other')
   })
 
-  it('colours brands: you first, five competitors, then Other', () => {
+  it('gives the accent to your own brand only: five competitors on gray slots, then Other', () => {
     expect(['you', 'b1', 'b2', 'b3', 'b4', 'b5'].map((k) => entityToken(`brand:${k}`))).toEqual([
-      '--viz-cat-1',
+      '--viz-you',
       '--viz-cat-2',
       '--viz-cat-3',
       '--viz-cat-4',
@@ -152,9 +153,39 @@ describe('stableSlots', () => {
 
 describe('colours', () => {
   it('resolves tokens from the stylesheet, with light fallbacks', () => {
-    expect(colorOf('engine:claude')).toBe('#eb6834')
-    document.documentElement.style.setProperty('--viz-cat-2', '#d95926')
-    expect(colorOf('engine:claude')).toBe('#d95926')
+    expect(colorOf('engine:claude')).toBe('#5f5e58')
+    document.documentElement.style.setProperty('--viz-cat-2', '#a09f98')
+    expect(colorOf('engine:claude')).toBe('#a09f98')
+  })
+
+  it('keeps the orange for your own series: no slot, ramp or status but critical and negative wears it', () => {
+    const ORANGE = '#ff4a00'
+    expect(colorOf('brand:you')).toBe(ORANGE)
+    for (let n = 1; n <= 8; n++) expect(tokenColor(`--viz-cat-${n}`)).not.toBe(ORANGE)
+    for (let n = 1; n <= 5; n++) expect(tokenColor(`--viz-seq-${n}`)).not.toBe(ORANGE)
+    expect(tokenColor('--viz-other')).not.toBe(ORANGE)
+    expect(['good', 'warning'].map((k) => colorOf(`status:${k}`))).not.toContain(ORANGE)
+    expect(colorOf('status:critical')).toBe(ORANGE)
+    expect(colorOf('sentiment:negative')).toBe(ORANGE)
+    expect(colorOf('sentiment:positive')).toBe('#0b0b0b')
+  })
+
+  it('has no hue but the orange in its fallback palette', () => {
+    const tokens = [
+      ...Array.from({ length: 8 }, (_, i) => `--viz-cat-${i + 1}`),
+      ...Array.from({ length: 5 }, (_, i) => `--viz-seq-${i + 1}`),
+      '--viz-other', '--viz-grid', '--viz-axis', '--viz-nodata', '--viz-div-pos', '--viz-div-mid', '--viz-good', '--viz-warning',
+    ]
+    for (const token of tokens) {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(tokenColor(token).slice(i, i + 2), 16))
+      // Warm grays: channels within a few steps of each other, never blue-leaning.
+      expect(Math.max(r, g, b) - Math.min(r, g, b), token).toBeLessThanOrEqual(12)
+      expect(b, token).toBeLessThanOrEqual(r)
+    }
+  })
+
+  it('falls back to the Other gray for a token it does not know', () => {
+    expect(tokenColor('--viz-nope')).toBe('#cbcac4')
   })
 
   it('steps through the sequential ramp', () => {
@@ -167,7 +198,7 @@ describe('colours', () => {
 
   it('resolves surfaces written as var() and adds alpha', () => {
     expect(resolveColor('#123456')).toBe('#123456')
-    expect(resolveColor('')).toBe('#ffffff')
+    expect(resolveColor('')).toBe('#e7e6e1')
     document.documentElement.style.setProperty('--ag-pane-bg', '#0e0e10')
     expect(resolveColor('var(--ag-pane-bg)')).toBe('#0e0e10')
     expect(resolveColor('var(--missing-token, #abcdef)')).toBe('#abcdef')
