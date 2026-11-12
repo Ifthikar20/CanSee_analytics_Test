@@ -185,6 +185,18 @@ def test_visibility_history_tool_records_what_it_compared(fake_anthropic, chat, 
     assert recorded["previous_check_at"] == result["previous_check_at"]
 
 
+def test_visibility_history_tool_lists_at_most_40_changes_but_counts_all(
+        fake_anthropic, chat, website):
+    for i in range(42):
+        bp = make_prompt(website, f"crm question {i}")
+        _answer(website, bp, "claude", days_ago=3, mentioned=True, rank=1)
+
+    result, _ = _tool(fake_anthropic, chat, "get_visibility_history")
+    assert len(result["changes"]) == 40
+    assert result["changes_total"] == 42
+    assert result["counts"]["first_check"] == 42
+
+
 def test_visibility_history_with_no_answers_says_so(fake_anthropic, chat):
     result, _ = _tool(fake_anthropic, chat, "get_visibility_history")
     assert result["changes"] == [] and result["latest_check_at"] is None

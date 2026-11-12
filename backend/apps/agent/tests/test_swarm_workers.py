@@ -58,10 +58,10 @@ class Setup:
     ``same_chat``), and jobs for its tasks."""
 
     def __init__(self, chat, *, prompts=1, options=None, serp=True, version=1, location="us",
-                 same_chat=False):
+                 same_chat=False, texts=None):
         chat = chat if same_chat else make_chat(chat.user, chat.website)
         self.run = make_run(chat)
-        self.prompts = plan_prompts(chat.website, prompts, location=location)
+        self.prompts = plan_prompts(chat.website, prompts, texts=texts, location=location)
         self.swarm, self.version = make_swarm(chat, self.run, self.prompts, options=options,
                                               serp_configured=serp, version=version)
         self.ctx = tool_context(self.run)
@@ -166,8 +166,11 @@ def test_version_one_shows_a_page_captured_within_the_hour_again(chat, monkeypat
     assert calls == []
     assert output.result == "You're #1 · captured 12 minutes ago"
     assert output.detail["reused"] is True
-    assert output.pane == {"kind": "serp", "tab_id": "serp:0123456789ab"}
-    assert "0123456789ab" in setup.ctx.emitter.research["serp"]
+    # An ad-hoc search's page is shown again as this tracked prompt's own capture.
+    capture_id = output.pane["tab_id"].split(":", 1)[1]
+    assert output.pane["kind"] == "serp" and capture_id != "0123456789ab"
+    assert set(setup.ctx.emitter.research["serp"]) == {capture_id}
+    assert setup.ctx.emitter.research["serp"][capture_id]["results"] == earlier["results"]
     assert setup.swarm_run.notes == [{
         "category": "google", "level": "info", "code": "reused_captures",
         "text": serp_page.REUSED_NOTE}]
@@ -176,6 +179,148 @@ def test_version_one_shows_a_page_captured_within_the_hour_again(chat, monkeypat
     fake_serp(monkeypatch, {1: serp_payload([(YOURS, "Northwind CRM")])})
     again, _ = rerun.run_task("google.p1.page1")
     assert again.detail["reused"] is False
+
+
+STAMP_KEYS = ("prompt_key", "prompt_id", "brand_prompt_id")
+
+
+def _stamp(prompt) -> dict:
+    return {"prompt_key": prompt.key, "prompt_id": prompt.prompt_id,
+            "brand_prompt_id": prompt.brand_prompt_id}
+
+
+def _stamped(capture: dict) -> dict:
+    return {k: capture.get(k) for k in STAMP_KEYS}
+
+
+def test_a_google_page_capture_names_its_tracked_prompt(chat, monkeypatch):
+    setup = Setup(chat)
+    fake_serp(monkeypatch, {1: serp_payload([(YOURS, "Northwind CRM")])})
+
+    output, _ = setup.run_task("google.p1.page1")
+
+    capture_id = output.pane["tab_id"].split(":", 1)[1]
+    want = _stamp(setup.prompts[0])
+    assert want["prompt_id"] and want["brand_prompt_id"]
+    assert _stamped(setup.ctx.emitter.research["serp"][capture_id]) == want
+    assert _stamped(setup.swarm_run.captures["p1"][1]) == want
+    (recorded,) = [e for e in run_events(setup.run) if e["type"] == "research.recorded"]
+    assert _stamped(recorded["capture"]) == want
+    # The task detail is pinned and size-capped; the stamp stays out of it.
+    assert not set(STAMP_KEYS) & set(output.detail)
+
+
+def _earlier_capture(chat, stamp=None) -> dict:
+    """A page of "best crm for team 1" an earlier reply of this chat captured
+    12 minutes ago (stamped for a tracked prompt when ``stamp`` is given)."""
+    earlier = build_serp_capture(serp_payload([(YOURS, "Northwind CRM")]),
+                                 website=chat.website, query="best crm for team 1", page=1,
+                                 location="us", capture_id="0123456789ab")
+    earlier["captured_at"] = (timezone.now() - timedelta(minutes=12)).isoformat()
+    earlier.update(stamp or {})
+    previous = make_run(chat, status="completed")
+    previous.assistant_message.research = {"serp": {"0123456789ab": earlier}}
+    previous.assistant_message.finished_at = timezone.now()
+    previous.assistant_message.save(update_fields=["research", "finished_at"])
+    return previous.assistant_message
+
+
+def test_a_reused_google_page_is_stamped_on_a_copy(chat, monkeypatch):
+    earlier = _earlier_capture(chat)  # an ad-hoc search: no stamp
+    calls = fake_serp(monkeypatch, {})
+    setup = Setup(chat, same_chat=True)
+
+    output, _ = setup.run_task("google.p1.page1")
+
+    assert calls == [] and output.detail["reused"] is True
+    capture_id = output.pane["tab_id"].split(":", 1)[1]
+    assert capture_id != "0123456789ab"
+    want = _stamp(setup.prompts[0])
+    assert _stamped(setup.ctx.emitter.research["serp"][capture_id]) == want
+    assert _stamped(setup.swarm_run.captures["p1"][1]) == want
+    # The earlier message keeps its own capture as it was.
+    earlier.refresh_from_db()
+    assert _stamped(earlier.research["serp"]["0123456789ab"]) == dict.fromkeys(STAMP_KEYS)
+
+
+def test_a_reused_page_of_the_same_tracked_prompt_keeps_its_capture(chat, monkeypatch):
+    fake_serp(monkeypatch, {})
+    setup = Setup(chat, same_chat=True)
+    # An earlier swarm searched the same tracked prompt under another key.
+    _earlier_capture(chat, {**_stamp(setup.prompts[0]), "prompt_key": "p7"})
+
+    output, _ = setup.run_task("google.p1.page1")
+
+    assert output.pane == {"kind": "serp", "tab_id": "serp:0123456789ab"}
+    assert _stamped(setup.ctx.emitter.research["serp"]["0123456789ab"]) == _stamp(
+        setup.prompts[0])
+
+
+def test_a_page_stamped_for_another_tracked_prompt_is_reused_as_a_capture_of_its_own(
+        chat, monkeypatch):
+    # Stamped by an earlier swarm for another tracked prompt that made the
+    # same search.
+    other = {"prompt_key": "p1", "prompt_id": "other-prompt", "brand_prompt_id": "other-brand"}
+    earlier = _earlier_capture(chat, other)
+    calls = fake_serp(monkeypatch, {})
+    setup = Setup(chat, same_chat=True)
+
+    output, _ = setup.run_task("google.p1.page1")
+
+    assert calls == [] and output.detail["reused"] is True
+    assert output.result == "You're #1 · captured 12 minutes ago"
+    capture_id = output.pane["tab_id"].split(":", 1)[1]
+    assert capture_id != "0123456789ab"
+    store = setup.ctx.emitter.research["serp"]
+    assert set(store) == {capture_id}
+    assert _stamped(store[capture_id]) == _stamp(setup.prompts[0])
+    assert store[capture_id]["results"] == earlier.research["serp"]["0123456789ab"]["results"]
+    assert setup.swarm_run.captures["p1"][1]["capture_id"] == capture_id
+    earlier.refresh_from_db()
+    assert _stamped(earlier.research["serp"]["0123456789ab"]) == other
+
+
+def test_prompts_reusing_one_unstamped_page_at_once_each_get_their_own(chat, monkeypatch):
+    # Two tasks that run at the same time both read the store before either
+    # records: both see the ad-hoc page unstamped.
+    from apps.agent.tools import research
+
+    earlier = _earlier_capture(chat)
+    page = earlier.research["serp"]["0123456789ab"]
+    monkeypatch.setattr(research, "_recent_captures", lambda ctx, query, location: {1: dict(page)})
+    calls = fake_serp(monkeypatch, {})
+    setup = Setup(chat, prompts=2, same_chat=True,
+                  texts=["best crm for team 1", "Best CRM, for team 1?"])
+
+    first, _ = setup.run_task("google.p1.page1")
+    second, _ = setup.run_task("google.p2.page1")
+
+    assert calls == []
+    ids = [o.pane["tab_id"].split(":", 1)[1] for o in (first, second)]
+    assert len({*ids, "0123456789ab"}) == 3
+    store = setup.ctx.emitter.research["serp"]
+    assert _stamped(store[ids[0]]) == _stamp(setup.prompts[0])
+    assert _stamped(store[ids[1]]) == _stamp(setup.prompts[1])
+
+
+def test_two_tracked_prompts_making_the_same_search_each_keep_their_page(chat, monkeypatch):
+    # Distinct tracked prompts whose texts are the same search (query_key).
+    setup = Setup(chat, prompts=2, texts=["best crm for team 1", "Best CRM, for team 1?"])
+    calls = fake_serp(monkeypatch, {1: serp_payload([(YOURS, "Northwind CRM")])})
+
+    first, _ = setup.run_task("google.p1.page1")
+    second, _ = setup.run_task("google.p2.page1")
+
+    assert len(calls) == 1 and second.detail["reused"] is True
+    first_id = first.pane["tab_id"].split(":", 1)[1]
+    second_id = second.pane["tab_id"].split(":", 1)[1]
+    assert first_id != second_id
+    store = setup.ctx.emitter.research["serp"]
+    assert _stamped(store[first_id]) == _stamp(setup.prompts[0])
+    assert _stamped(store[second_id]) == _stamp(setup.prompts[1])
+    recorded = {e["capture_id"]: _stamped(e["capture"])
+                for e in run_events(setup.run) if e["type"] == "research.recorded"}
+    assert recorded == {first_id: _stamp(setup.prompts[0]), second_id: _stamp(setup.prompts[1])}
 
 
 def test_google_not_configured_or_out_of_allowance_skips(chat, monkeypatch):

@@ -745,6 +745,33 @@ def test_changes_order_and_cap():
     assert len(swarm_tables.apply_previous(many, previous)) == 30
 
 
+def test_rows_the_previous_version_lacked_are_marked_added_not_listed():
+    swarm, version, results = contract_research()
+    table = build_table(swarm, version, outcome_for(version, results), gaps={"p1": {"gap": GAP}},
+                        previous=None)
+    previous = json.loads(json.dumps(table))
+    previous["version"] = 1
+    # Version 1 had no content gap and one source fewer.
+    gaps = next(s for s in previous["sheets"] if s["key"] == "gaps")
+    gaps["rows"] = []
+    sources = next(s for s in previous["sheets"] if s["key"] == "sources")
+    dropped = sources["rows"].pop()["key"]
+    again = build_table(swarm, fake_version(swarm, 2), outcome_for(version, results),
+                        gaps={"p1": {"gap": GAP}}, previous=previous)
+
+    contract.assert_table(again)
+    added = {(s["key"], r["key"]) for s in again["sheets"] for r in s["rows"] if r.get("added")}
+    new_gaps = {("gaps", r["key"]) for s in again["sheets"] if s["key"] == "gaps"
+                for r in s["rows"]}
+    assert new_gaps and added == new_gaps | {("sources", dropped)}
+    assert again["changes"] == []
+    for s in again["sheets"]:
+        for r in s["rows"]:
+            assert all(c.get("previous") is None for c in r["cells"].values())
+    # A first version has nothing to compare with: no row is added.
+    assert not any(r.get("added") for s in table["sheets"] for r in s["rows"])
+
+
 # ── Markdown and texts ────────────────────────────────────────────────────
 
 

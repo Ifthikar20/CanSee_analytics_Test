@@ -539,6 +539,16 @@ export function swarmTable(overrides = {}) {
   }
 }
 
+// swarmTable() as if its change list had hit the server's cap: Google for p3
+// and ChatGPT for p2 changed too (they carry `previous`) but are not listed.
+export function overflowTable(overrides = {}) {
+  const table = swarmTable(overrides)
+  const [, p2, p3] = table.sheets[0].rows
+  p3.cells.google.previous = { text: '#2', version: 1 }
+  p2.cells.chatgpt.previous = { text: 'Named #5', version: 1 }
+  return table
+}
+
 export function tablePart(overrides = {}) {
   return {
     id: 'p5',
