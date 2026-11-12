@@ -583,14 +583,34 @@ describe('moving a card with the keyboard', () => {
     await flushPromises()
     while (mounted.length) mounted.pop().unmount()
 
-    // Four columns on a board too narrow for them: still three to a row.
+    // Four columns on a board too narrow for them fold in half: two rows of
+    // two, not three and one. Citations starts the second row, so it can go
+    // up (to the first place, above itself) and not down.
     const narrow = await setup(FOUR, { columns: 4 })
-    g = grip(narrow.wrapper, 'sentiment')
+    g = grip(narrow.wrapper, 'citations')
     g.focus()
     press(g, ' ')
     press(g, 'ArrowDown')
     await flushPromises()
-    expect(order(narrow.wrapper)).toEqual(['traffic', 'citations', 'ai-traffic', 'sentiment'])
+    expect(said(narrow.ui)).toMatch(/is already in the bottom row\.$/)
+    expect(order(narrow.wrapper)).toEqual(keysOf(FOUR))
+    press(g, 'ArrowUp')
+    await flushPromises()
+    expect(order(narrow.wrapper)).toEqual(['citations', 'traffic', 'sentiment', 'ai-traffic'])
+    press(g, 'Escape')
+    await flushPromises()
+    while (mounted.length) mounted.pop().unmount()
+
+    // Three columns on the same board keep three to a row: Citations ends
+    // the first row, so it cannot go up.
+    const kept = await setup(FOUR, { columns: 3 })
+    g = grip(kept.wrapper, 'citations')
+    g.focus()
+    press(g, ' ')
+    press(g, 'ArrowUp')
+    await flushPromises()
+    expect(said(kept.ui)).toMatch(/is already in the top row\.$/)
+    expect(order(kept.wrapper)).toEqual(keysOf(FOUR))
     press(g, 'Escape')
     await flushPromises()
     while (mounted.length) mounted.pop().unmount()
