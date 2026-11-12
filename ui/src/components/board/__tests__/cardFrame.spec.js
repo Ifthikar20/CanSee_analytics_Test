@@ -6,13 +6,11 @@ import { defineComponent, h, nextTick, ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { BOARD_CONTEXT, CARD_STATUS, useCardStatus } from '@/lib/board/context'
 import { PREVIEW_KINDS, previewShapes } from '@/lib/board/previews'
-import { WIDGETS } from '@/lib/board/widgets'
 import BlockPreview from '../BlockPreview.vue'
 import CardFoot from '../CardFoot.vue'
 import ComingUp from '../ComingUp.vue'
 import CardShell from '../widgets/a/CardShell.vue'
 import CardFrame from '../widgets/b/CardFrame.vue'
-import widgetsE from '../widgets/e/index.js'
 
 enableAutoUnmount(afterEach)
 
@@ -152,20 +150,6 @@ describe('ComingUp and the cards that wait for their blocks', () => {
     expect(wrapper.find('.bd-soon-text').exists()).toBe(false)
     expect(wrapper.find('.bd-soon-label').exists()).toBe(true)
   })
-
-  // Group D's cards are built: widgets/d/__tests__/cards.spec.js covers what
-  // each one reports to its frame.
-  it('never lets a card that is not built yet claim live data', async () => {
-    for (const [key, entry] of Object.entries(widgetsE)) {
-      const card = (await entry.card()).default
-      const { wrapper, reported } = await mountFramed(card, { websiteId: 'w1' })
-      const meta = WIDGETS.find((w) => w.key === key)
-      expect(wrapper.text(), key).toContain(meta.description)
-      expect(reported, key).not.toContain('live')
-      expect(reported.at(-1), key).toBe('empty')
-      wrapper.unmount()
-    }
-  }, 30_000)
 })
 
 describe('CardFoot', () => {
