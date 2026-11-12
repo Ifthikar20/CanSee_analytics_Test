@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { mount } from '@vue/test-utils'
 import { DEFAULT_LAYOUT, WIDGETS } from '@/lib/board/widgets'
 import { WIDGET_COMPONENTS } from '@/components/board/widgetComponents'
 import widgetsD from '../index.js'
@@ -43,5 +44,29 @@ describe('group D blocks', () => {
         for (const [key, entry] of Object.entries(widgetsD)) {
             expect((await entry.panel()).default.props.websiteId, key).toBeTruthy()
         }
+    }, SLOW)
+
+    it('draws its own catalog tile for the watch and the visibility score', async () => {
+        expect(Object.keys(widgetsD).filter((key) => widgetsD[key].preview)).toEqual(['watch', 'visibility-score'])
+        for (const key of ['watch', 'visibility-score']) {
+            const wrapper = mount((await widgetsD[key].preview()).default)
+            const svg = wrapper.find('svg')
+            // A drawing under the catalog's "Sample data" chip: hidden from
+            // screen readers, in the tile's proportions, the accent once,
+            // painted from tokens only.
+            expect(svg.attributes('aria-hidden'), key).toBe('true')
+            const [, , width, height] = svg.attributes('viewBox').split(' ').map(Number)
+            expect(width / height, key).toBeCloseTo(1.6)
+            expect(wrapper.findAll('.is-you, .wd-eye-iris'), key).toHaveLength(1)
+            expect(wrapper.html(), key).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|fill="|stroke="/i)
+            wrapper.unmount()
+        }
+    }, SLOW)
+
+    it('sketches the visibility score in the unit the block really shows', async () => {
+        const wrapper = mount((await widgetsD['visibility-score'].preview()).default)
+        expect(wrapper.text()).toContain('% OF ANSWERS')
+        expect(wrapper.text()).not.toContain('/ 100')
+        expect(wrapper.findAll('polyline')).toHaveLength(1)
     }, SLOW)
 })
