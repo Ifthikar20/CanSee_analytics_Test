@@ -19,7 +19,14 @@ from apps.websites.models import Website
 pytestmark = pytest.mark.django_db
 
 # Ask AI and Prompt ranking (wave 4 contract 6).
-DEFAULT = [{"key": "prompt-box", "size": "full"}, {"key": "ranking", "size": "full"}]
+DEFAULT = [
+    {"key": "watch", "size": "third"},
+    {"key": "asked-answered", "size": "third"},
+    {"key": "answer-rank", "size": "third"},
+    {"key": "visibility-score", "size": "third"},
+    {"key": "prompt-box", "size": "full"},
+    {"key": "ranking", "size": "full"},
+]
 DEFAULT_PAYLOAD = {"saved": False, "version": 0, "updated_at": None, "widgets": DEFAULT}
 CONFLICT_MESSAGE = "Your board changed in another window."
 

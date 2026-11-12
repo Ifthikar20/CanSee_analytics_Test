@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import widgetSource from '@/components/board/BoardWidget.vue?raw'
-import { SPLIT_MIN_PX, WIDE_MIN_PX, boardMode, dropIndex, edgeSpeed, flowLayout, keyTarget, spanOf } from '../flow'
+import gridSource from '@/components/board/BoardGrid.vue?raw'
+import {
+  DEFAULT_DENSITY,
+  DENSE_MIN_PX,
+  DENSITIES,
+  SPLIT_MIN_PX,
+  WIDE_MIN_PX,
+  boardMode,
+  cleanDensity, dropIndex, edgeSpeed, flowLayout, keyTarget, spanOf } from '../flow'
 
 const third = (key) => ({ key, size: 'third' })
 const half = (key) => ({ key, size: 'half' })
@@ -23,27 +30,80 @@ function boxes(items) {
 
 describe('boardMode and spanOf', () => {
   it('reads the column mode from the board width, like the container queries', () => {
-    expect(boardMode(0)).toBe('wide')
-    expect(boardMode(639)).toBe('single')
-    expect(boardMode(640)).toBe('medium')
-    expect(boardMode(1039)).toBe('medium')
-    expect(boardMode(1040)).toBe('wide')
-    // Just over a breakpoint is the wider mode, as max-width: 1039px no longer matches.
-    expect(boardMode(1039.5)).toBe('wide')
-    expect(boardMode(639.5)).toBe('medium')
+    // Three columns of thirds, as wide as the board allows.
+    expect(boardMode(0, 3)).toBe('wide')
+    expect(boardMode(639, 3)).toBe('single')
+    expect(boardMode(640, 3)).toBe('medium')
+    expect(boardMode(919, 3)).toBe('medium')
+    expect(boardMode(920, 3)).toBe('wide')
+    expect(boardMode(4000, 3)).toBe('wide')
+    // Just over a breakpoint is the wider mode, as max-width: 919px no longer matches.
+    expect(boardMode(919.5, 3)).toBe('wide')
+    expect(boardMode(639.5, 3)).toBe('medium')
+  })
+
+  it('shows as many columns as the density asks for and the width allows', () => {
+    // Four: only on a board wide enough, else three, else two.
+    expect(boardMode(0, 4)).toBe('dense')
+    expect(boardMode(1240, 4)).toBe('dense')
+    expect(boardMode(1239.5, 4)).toBe('dense')
+    expect(boardMode(1239, 4)).toBe('wide')
+    expect(boardMode(920, 4)).toBe('wide')
+    expect(boardMode(919, 4)).toBe('medium')
+    expect(boardMode(640, 4)).toBe('medium')
+    expect(boardMode(639, 4)).toBe('single')
+    // Two: never more, whatever the width.
+    expect(boardMode(0, 2)).toBe('medium')
+    expect(boardMode(4000, 2)).toBe('medium')
+    expect(boardMode(640, 2)).toBe('medium')
+    expect(boardMode(639, 2)).toBe('single')
+    // A phone is one column at every density.
+    for (const n of DENSITIES) expect(boardMode(390, n), n).toBe('single')
+  })
+
+  it('falls back to the default density for a missing or unknown one', () => {
+    expect(DENSITIES).toEqual([2, 3, 4])
+    expect(DEFAULT_DENSITY).toBe(4)
+    expect(DENSITIES.map(cleanDensity)).toEqual([2, 3, 4])
+    // The grid's data-columns attribute is a string.
+    expect(['2', '3', '4'].map(cleanDensity)).toEqual([2, 3, 4])
+    for (const bad of [undefined, null, '', 'many', 0, 1, 5, 3.5, NaN, {}, true]) expect(cleanDensity(bad), String(bad)).toBe(4)
+    expect(boardMode(2000)).toBe('dense')
+    expect(boardMode(2000, 'many')).toBe('dense')
+    expect(boardMode(2000, '3')).toBe('wide')
+    expect(boardMode(2000, '2')).toBe('medium')
   })
 
   it('spans the columns of each size in each mode', () => {
+    expect(['third', 'half', 'full'].map((s) => spanOf(s, 'dense'))).toEqual([3, 6, 12])
     expect(['third', 'half', 'full'].map((s) => spanOf(s, 'wide'))).toEqual([4, 6, 12])
     expect(['third', 'half', 'full'].map((s) => spanOf(s, 'medium'))).toEqual([6, 6, 12])
     expect(['third', 'half', 'full'].map((s) => spanOf(s, 'single'))).toEqual([12, 12, 12])
+    // An unknown size takes the row; an unknown mode is the three-column one.
+    expect(spanOf('huge', 'dense')).toBe(12)
+    expect(spanOf('third', 'nope')).toBe(4)
   })
 
-  it('keeps the thresholds equal to the container queries in BoardWidget.vue', () => {
-    expect(widgetSource).toContain(`@container board (max-width: ${WIDE_MIN_PX - 1}px)`)
-    expect(widgetSource).toContain(`@container board (max-width: ${SPLIT_MIN_PX - 1}px)`)
-    expect(WIDE_MIN_PX - 1).toBe(1039)
-    expect(SPLIT_MIN_PX - 1).toBe(639)
+  it('keeps the thresholds and spans equal to the rules in BoardGrid.vue', () => {
+    const css = gridSource.replace(/\s+/g, ' ')
+    expect(css).toContain(`@container board (max-width: ${DENSE_MIN_PX - 1}px)`)
+    expect(css).toContain(`@container board (max-width: ${WIDE_MIN_PX - 1}px)`)
+    expect(css).toContain(`@container board (max-width: ${SPLIT_MIN_PX - 1}px)`)
+    expect([DENSE_MIN_PX - 1, WIDE_MIN_PX - 1, SPLIT_MIN_PX - 1]).toEqual([1239, 919, 639])
+    // Each density's own span of a third, on a board wide enough for it.
+    expect(css).toContain(`.bd-grid.is-cols-2 { --bd-span-third: ${spanOf('third', 'medium')}; }`)
+    expect(css).toContain(`.bd-grid.is-cols-3 { --bd-span-third: ${spanOf('third', 'wide')}; }`)
+    expect(css).toContain(`.bd-grid.is-cols-4 { --bd-span-third: ${spanOf('third', 'dense')}; }`)
+    // A narrower board drops a column, then another, then is one column.
+    expect(css).toContain(
+      `@container board (max-width: 1239px) { .bd-grid.is-cols-4 { --bd-span-third: ${spanOf('third', 'wide')}; } }`,
+    )
+    expect(css).toContain(
+      `@container board (max-width: 919px) { .bd-grid.is-cols-4, .bd-grid.is-cols-3 { --bd-span-third: ${spanOf('third', 'medium')}; } }`,
+    )
+    expect(css).toContain(
+      '@container board (max-width: 639px) { .bd-grid.is-cols-2, .bd-grid.is-cols-3, .bd-grid.is-cols-4 { --bd-span-third: 12; --bd-span-half: 12; } }',
+    )
   })
 })
 
@@ -56,6 +116,26 @@ describe('flowLayout', () => {
     expect(at(flowLayout([third('a'), full('b')], 'wide'))).toEqual(['a:0/0/4', 'b:1/0/12'])
     // A third and a half share a row; a third after them starts the next one.
     expect(at(flowLayout([third('a'), half('b'), third('c')], 'wide'))).toEqual(['a:0/0/4', 'b:0/4/6', 'c:1/0/4'])
+  })
+
+  it('puts four thirds in a row of a dense board, and a half takes two of them', () => {
+    expect(at(flowLayout([third('a'), third('b'), third('c'), third('d'), full('e')], 'dense'))).toEqual([
+      'a:0/0/3',
+      'b:0/3/3',
+      'c:0/6/3',
+      'd:0/9/3',
+      'e:1/0/12',
+    ])
+    expect(at(flowLayout([third('a'), half('b'), third('c'), third('d')], 'dense'))).toEqual([
+      'a:0/0/3',
+      'b:0/3/6',
+      'c:0/9/3',
+      'd:1/0/3',
+    ])
+    // Down from the last of four lands under it, on the full row.
+    const row = [third('a'), third('b'), third('c'), third('d'), full('e')]
+    expect(keyTarget(row, 'd', 'ArrowDown', 'dense')).toEqual({ index: 4, edge: null })
+    expect(keyTarget(row, 'd', 'ArrowUp', 'dense')).toEqual({ index: 3, edge: 'top' })
   })
 
   it('lays out the medium and single modes', () => {

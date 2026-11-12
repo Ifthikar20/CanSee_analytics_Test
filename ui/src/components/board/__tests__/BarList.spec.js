@@ -61,4 +61,23 @@ describe('BarList', () => {
     expect(fills(wrapper)).toHaveLength(0)
     expect(wrapper.text()).toContain('No answers')
   })
+
+  it('marks your row with the accent square only where it sits among others', () => {
+    const mixed = mount(BarList, { props: { items: ITEMS } })
+    const marks = mixed.findAll('.bd-bars-mark')
+    expect(marks).toHaveLength(1)
+    expect(marks[0].classes()).toContain('cs-mark')
+    // Decoration: the row's label still reads as it did.
+    expect(marks[0].attributes('aria-hidden')).toBe('true')
+    expect(mixed.findAll('li')[0].find('.bd-bars-label').text()).toBe('Wrenfield')
+    expect(mixed.findAll('li')[1].find('.bd-bars-mark').exists()).toBe(false)
+
+    // A list that is all yours (countries, paths, prompts) needs no mark.
+    const mine = mount(BarList, { props: { items: ITEMS.map((item) => ({ ...item, emphasis: true })) } })
+    expect(mine.findAll('.bd-bars-mark')).toHaveLength(0)
+    expect(mine.findAll('.bd-bars-fill.is-you')).toHaveLength(3)
+    // Nor does a list with none of yours, or an empty one.
+    expect(mount(BarList, { props: { items: ITEMS.slice(1) } }).findAll('.bd-bars-mark')).toHaveLength(0)
+    expect(mount(BarList, { props: { items: [] } }).findAll('.bd-bars-mark')).toHaveLength(0)
+  })
 })

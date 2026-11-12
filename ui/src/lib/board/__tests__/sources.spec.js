@@ -22,6 +22,8 @@ const insights = vi.hoisted(() => ({
   promptIdeas: vi.fn(),
 }))
 vi.mock('@/api/insights', () => ({ default: insights }))
+const agent = vi.hoisted(() => ({ listArtifacts: vi.fn() }))
+vi.mock('@/api/agent', () => ({ default: agent }))
 
 const { SOURCES, SOURCE_KEYS } = await import('../sources')
 const { BOARD_CONTEXT, IN_PANEL, useBoard, useInPanel } = await import('../context')
@@ -35,6 +37,7 @@ beforeEach(() => {
   traffic.traffic = answer({ from: 'traffic' })
   traffic.aiTraffic = answer({ from: 'ai-traffic' })
   for (const key of Object.keys(insights)) insights[key] = answer({ from: key })
+  agent.listArtifacts = answer([{ id: 'r1', kind: 'report' }])
 })
 
 describe('SOURCES', () => {
@@ -54,7 +57,21 @@ describe('SOURCES', () => {
       'products',
       'promptIdeas',
       'ranking',
+      'reports',
     ])
+  })
+
+  it("reads the project's saved reports as the Reports page lists them, quietly", async () => {
+    await expect(SOURCES.reports('w1')).resolves.toEqual([{ id: 'r1', kind: 'report' }])
+    expect(agent.listArtifacts).toHaveBeenCalledWith('w1', { kinds: ['report'] }, { _silentError: true })
+    // A failed request rejects, so the card shows its load error (useBoardSource).
+    agent.listArtifacts = vi.fn(async () => {
+      throw new Error('down')
+    })
+    await expect(SOURCES.reports('w1')).rejects.toThrow('down')
+    // No answer at all reads as no payload.
+    agent.listArtifacts = vi.fn(async () => undefined)
+    await expect(SOURCES.reports('w1')).resolves.toBeNull()
   })
 
   it('reads Prompt ranking from Autopilot, quietly, and resolves with the payload', async () => {

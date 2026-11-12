@@ -436,7 +436,7 @@ describe('where a drag starts', () => {
     expect(lifted(wrapper)).toBe(false)
     pointer('pointerup', window, { x: 90, y: 150 })
 
-    pointer('pointerdown', traffic.find('p.bd-card-desc').element, { x: 50, y: 30, pointerType: 'touch' })
+    pointer('pointerdown', traffic.find('h2.bd-card-title').element, { x: 50, y: 30, pointerType: 'touch' })
     pointer('pointermove', window, { x: 90, y: 30, pointerType: 'touch' })
     await nextTick()
     expect(lifted(wrapper)).toBe(false)

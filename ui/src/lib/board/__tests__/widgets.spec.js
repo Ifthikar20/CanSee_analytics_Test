@@ -1,10 +1,36 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_LAYOUT, SIZES, SIZE_LABELS, WIDGETS, panelTitle, widgetMeta } from '../widgets'
+import { DEFAULT_LAYOUT, SIZES, SIZE_LABELS, TONES, WIDGETS, blockCode, panelTitle, widgetMeta } from '../widgets'
+import { PREVIEW_KINDS } from '../previews'
 import { boardLocation } from '../links'
 
-// board_contract.md 3 with autopilot_contract.md 6 first, row by row: key,
-// title, one line, default size, allowed sizes.
+// The catalog row by row: key, title, one line, default size, allowed
+// sizes. The four blocks that open a new board lead it, board_contract.md 3
+// follows with autopilot_contract.md 6 first, and the account and project
+// blocks end it. The backend's apps/boards/layout.py is tested against the
+// same keys and default sizes.
 const CONTRACT = [
+  ['watch', 'Watch', 'An eye on your tracking: the prompts and AI engines it follows.', 'third', ['third', 'half']],
+  [
+    'asked-answered',
+    'Asked and answered',
+    'Your latest tracked question, and whether each engine named you in its answer.',
+    'third',
+    ['third', 'half'],
+  ],
+  [
+    'answer-rank',
+    'Rank in AI answers',
+    'The brands AI names in recent answers, in order, with your place among them.',
+    'third',
+    ['third', 'half'],
+  ],
+  [
+    'visibility-score',
+    'Visibility score',
+    'How often AI names you, as one number, with the last weeks behind it.',
+    'third',
+    ['third', 'half'],
+  ],
   [
     'prompt-box',
     'Ask AI',
@@ -32,12 +58,64 @@ const CONTRACT = [
   ['prompt-research', 'Prompt research', 'New questions worth tracking, and where they came from.', 'half', ['half', 'full']],
   ['competitors', 'Competitors', 'You next to the competitors you track.', 'half', ['half', 'full']],
   ['products', 'Products', 'Your products in Google Shopping and AI answers.', 'half', ['half', 'full']],
+  [
+    'prompt-runs',
+    'Prompt runs',
+    'The prompt runs of this month: what is left on Free, what was used on a paid plan.',
+    'third',
+    ['third', 'half'],
+  ],
+  ['next-steps', 'Next steps', 'What is not set up for this project yet, and what to do next.', 'third', ['third', 'half']],
+  ['latest-report', 'Latest report', 'The most recent report you saved for this project.', 'half', ['half', 'full']],
 ]
 
 describe('the widget catalog', () => {
-  it('lists the 21 widgets of the contracts, in catalog order, with their sizes and one-liners', () => {
+  it('lists the 28 blocks, in catalog order, with their sizes and one-liners', () => {
     expect(WIDGETS.map((w) => [w.key, w.title, w.description, w.size, [...w.sizes]])).toEqual(CONTRACT)
-    expect(WIDGETS).toHaveLength(21)
+    expect(WIDGETS).toHaveLength(28)
+    expect(new Set(WIDGETS.map((w) => w.key)).size).toBe(28)
+  })
+
+  it('numbers the blocks CNS_01 to CNS_28 by catalog order', () => {
+    expect(WIDGETS.map((w) => blockCode(w.key))).toEqual(
+      Array.from({ length: 28 }, (_, i) => `CNS_${String(i + 1).padStart(2, '0')}`),
+    )
+    // The codes people see on the board: the four that open it, then Ask AI.
+    expect(['watch', 'asked-answered', 'answer-rank', 'visibility-score', 'prompt-box'].map(blockCode)).toEqual([
+      'CNS_01',
+      'CNS_02',
+      'CNS_03',
+      'CNS_04',
+      'CNS_05',
+    ])
+    expect(blockCode('latest-report')).toBe('CNS_28')
+    expect(blockCode('nope')).toBe('')
+    expect(blockCode(undefined)).toBe('')
+  })
+
+  it('gives every block a short caption, a surface and a catalog drawing', () => {
+    expect(TONES).toEqual(['ink', 'light'])
+    for (const w of WIDGETS) {
+      // One line under the card, beside its code and its controls.
+      expect(w.caption.length, w.key).toBeGreaterThan(0)
+      expect(w.caption.length, w.key).toBeLessThanOrEqual(26)
+      expect(TONES, w.key).toContain(w.tone)
+      expect(PREVIEW_KINDS, w.key).toContain(w.preview)
+    }
+    expect(new Set(WIDGETS.map((w) => w.caption)).size).toBe(28)
+  })
+
+  it('spreads the ink blocks out, so the grid has rhythm and never a run of black', () => {
+    const tones = WIDGETS.map((w) => w.tone)
+    const ink = tones.filter((t) => t === 'ink').length
+    expect(ink).toBeGreaterThanOrEqual(6)
+    expect(ink).toBeLessThanOrEqual(10)
+    // No two ink blocks are neighbours in the catalog.
+    tones.forEach((tone, i) => {
+      if (i > 0 && tone === 'ink') expect(tones[i - 1], WIDGETS[i].key).toBe('light')
+    })
+    // A new board reads ink, light, light, ink, then its two wide cards in light.
+    expect(DEFAULT_LAYOUT.map((w) => widgetMeta(w.key).tone)).toEqual(['ink', 'light', 'light', 'ink', 'light', 'light'])
   })
 
   it('allows each default size and only the three sizes', () => {
@@ -49,17 +127,24 @@ describe('the widget catalog', () => {
     expect(SIZE_LABELS).toEqual({ third: 'One third', half: 'Half', full: 'Full width' })
   })
 
-  it('starts a board with Ask AI, then Prompt ranking', () => {
+  it('starts a board with a row of four small blocks, then Ask AI and Prompt ranking', () => {
     expect(DEFAULT_LAYOUT.map((w) => ({ ...w }))).toEqual([
+      { key: 'watch', size: 'third' },
+      { key: 'asked-answered', size: 'third' },
+      { key: 'answer-rank', size: 'third' },
+      { key: 'visibility-score', size: 'third' },
       { key: 'prompt-box', size: 'full' },
       { key: 'ranking', size: 'full' },
     ])
+    // Each at its own default size.
+    for (const w of DEFAULT_LAYOUT) expect(widgetMeta(w.key).size, w.key).toBe(w.size)
     expect(Object.isFrozen(DEFAULT_LAYOUT)).toBe(true)
     expect(Object.isFrozen(WIDGETS[0])).toBe(true)
   })
 
   it('looks a widget up by key', () => {
     expect(widgetMeta('ai-crawlers')).toMatchObject({ title: 'AI crawlers', size: 'third' })
+    expect(widgetMeta('visibility-score')).toMatchObject({ caption: 'One number to watch', tone: 'ink', preview: 'numeral' })
     expect(widgetMeta('overview')).toBeNull()
     expect(widgetMeta(undefined)).toBeNull()
   })
@@ -71,6 +156,7 @@ describe('the widget catalog', () => {
     expect(panelTitle('countries', { prompt: 'p1' })).toBe('Countries')
     expect(panelTitle('prompt-box', { run: 'r1' })).toBe('Ask AI')
     expect(panelTitle('ranking', { order: 'weakest' })).toBe('Prompt ranking')
+    expect(panelTitle('answer-rank', {})).toBe('Rank in AI answers')
     expect(panelTitle('nope')).toBe('')
   })
 })

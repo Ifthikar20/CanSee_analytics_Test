@@ -46,8 +46,13 @@ const { useAuthStore } = await import('@/stores/auth')
 const { useBoardStore } = await import('@/stores/board')
 const { default: AnalyticsBoardPage } = await import('../AnalyticsBoardPage.vue')
 
-// The default board (autopilot_contract.md 6): Ask AI, then Prompt ranking.
+// The default board: a row of four small blocks, then Ask AI and Prompt
+// ranking (autopilot_contract.md 6).
 const DEFAULT = [
+  { key: 'watch', size: 'third' },
+  { key: 'asked-answered', size: 'third' },
+  { key: 'answer-rank', size: 'third' },
+  { key: 'visibility-score', size: 'third' },
   { key: 'prompt-box', size: 'full' },
   { key: 'ranking', size: 'full' },
 ]
@@ -166,12 +171,14 @@ describe('AnalyticsBoardPage', () => {
     const { wrapper } = await setup()
     // The board's own toolbar, sticky in main; Analytics has no sidebar to open.
     const header = wrapper.find('.bd-top[data-bd-sticky] > header.bd-bar')
-    expect(header.find('h1#bd-title').text()).toBe('Analytics')
+    expect(header.find('h1#bd-title .bd-title-name').text()).toBe('Wrenfield Analytics')
     expect(wrapper.find('header.ag-page-header').exists()).toBe(false)
     expect(wrapper.findAll('button').some((b) => /sidebar/i.test(b.attributes('aria-label') || ''))).toBe(false)
     expect(wrapper.find('section.bd-main').attributes('aria-labelledby')).toBe('bd-title')
-    expect(cells(wrapper)).toEqual(['prompt-box', 'ranking'])
-    expect(wrapper.findAll('.bd-skel')).toHaveLength(2)
+    expect(cells(wrapper)).toEqual(DEFAULT_KEYS)
+    expect(wrapper.findAll('.bd-skel')).toHaveLength(6)
+    // Nothing is known yet, so no card claims to be live.
+    expect(wrapper.findAll('.bd-card-chip').map((c) => c.text())).toEqual(Array(6).fill('Loading'))
     expect(loaded).toEqual([])
     expect(addButton(wrapper).attributes('disabled')).toBeDefined()
 
@@ -181,8 +188,169 @@ describe('AnalyticsBoardPage', () => {
     // Each card's code loads once the layout is known (in whatever order Vue mounts them).
     expect([...loaded].sort()).toEqual(['sentiment', 'traffic'])
     expect(addButton(wrapper).attributes('disabled')).toBeUndefined()
+    // The plus after the header line: an icon with a name.
     expect(addButton(wrapper).attributes('aria-label')).toBe('Add widget')
-    expect(addButton(wrapper).text()).toBe('Add widget')
+    expect(addButton(wrapper).text()).toBe('')
+    expect(addButton(wrapper).find('svg').attributes('aria-hidden')).toBe('true')
+    expect(header.element.children[1].contains(addButton(wrapper).element)).toBe(true)
+  })
+
+  it("heads the board with the project's name in ink, then what is true of it in gray", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-12T10:00:00Z'))
+    api.get.mockResolvedValue(payload())
+    const { wrapper, router } = await setup()
+    useAppStore().setWebsites([
+      { id: 'w1', name: 'Wrenfield', url: 'https://www.wrenfield.co' },
+      { id: 'w2', name: 'acme.io', url: 'https://acme.io' },
+    ])
+    await nextTick()
+    const title = () => wrapper.find('h1#bd-title')
+    expect(title().find('.bd-title-name').text()).toBe('Wrenfield Analytics')
+    expect(title().find('.bd-title-desc').text()).toBe(', AI visibility, wrenfield.co, 2026')
+    expect(title().text().replace(/\s+/g, ' ')).toBe('Wrenfield Analytics, AI visibility, wrenfield.co, 2026')
+    // The plus follows the line; the density and the options sit on the right.
+    const bar = wrapper.find('header.bd-bar').element
+    expect(bar.children[0]).toBe(title().element)
+    expect(bar.children[1].contains(addButton(wrapper).element)).toBe(true)
+    expect(bar.children[2].querySelector('[role="radiogroup"]')).not.toBeNull()
+
+    // Another project says its own; a name that is the site is not repeated.
+    await router.push('/projects/w2/analytics')
+    await settle()
+    expect(title().find('.bd-title-name').text()).toBe('acme.io Analytics')
+    expect(title().find('.bd-title-desc').text()).toBe(', AI visibility, 2026')
+
+    // A project the app does not know yet: the page still names itself.
+    useAppStore().setWebsites([])
+    await nextTick()
+    expect(title().find('.bd-title-name').text()).toBe('Analytics')
+    expect(title().find('.bd-title-desc').text()).toBe(', AI visibility, 2026')
+  })
+
+  describe('the density', () => {
+    const group = (wrapper) => wrapper.find('.bd-bar [role="radiogroup"]')
+    const options = (wrapper) => group(wrapper).findAll('[role="radio"]')
+    const checked = (wrapper) => options(wrapper).filter((o) => o.attributes('aria-checked') === 'true').map((o) => o.attributes('aria-label'))
+    const columns = (wrapper) => wrapper.find('ul.bd-grid').attributes('data-columns')
+
+    it('offers 2, 3 and 4 columns as a radio group, four by default', async () => {
+      api.get.mockResolvedValue(payload())
+      const { wrapper } = await setup()
+      expect(group(wrapper).attributes('aria-label')).toBe('Columns')
+      expect(options(wrapper).map((o) => o.attributes('aria-label'))).toEqual(['2 columns', '3 columns', '4 columns'])
+      expect(options(wrapper).map((o) => o.element.tagName)).toEqual(['BUTTON', 'BUTTON', 'BUTTON'])
+      expect(checked(wrapper)).toEqual(['4 columns'])
+      expect(columns(wrapper)).toBe('4')
+      // Each icon is as many bars as columns, and decoration only.
+      expect(options(wrapper).map((o) => o.findAll('svg rect').length)).toEqual([2, 3, 4])
+      expect(options(wrapper).every((o) => o.find('svg').attributes('aria-hidden') === 'true')).toBe(true)
+      // One tab stop: the chosen one.
+      expect(options(wrapper).map((o) => o.attributes('tabindex'))).toEqual(['-1', '-1', '0'])
+    })
+
+    it('changes the grid at once and remembers the choice for this user', async () => {
+      api.get.mockResolvedValue(payload())
+      const { wrapper } = await setup()
+      await options(wrapper)[0].trigger('click')
+      expect(checked(wrapper)).toEqual(['2 columns'])
+      expect(columns(wrapper)).toBe('2')
+      expect(wrapper.find('ul.bd-grid').classes()).toContain('is-cols-2')
+      expect(localStorage.getItem('cs-board-columns-v1:7')).toBe('2')
+      // The layout is the user's cards; the density is not part of it.
+      await new Promise((r) => setTimeout(r, 500))
+      expect(api.save).not.toHaveBeenCalled()
+
+      // The next visit starts where this one left off.
+      while (mounted.length) mounted.pop().unmount()
+      const next = await setup()
+      expect(checked(next.wrapper)).toEqual(['2 columns'])
+      expect(columns(next.wrapper)).toBe('2')
+    })
+
+    it('keeps each account to its own choice', async () => {
+      localStorage.setItem('cs-board-columns-v1:7', '3')
+      localStorage.setItem('cs-board-columns-v1:8', '2')
+      api.get.mockResolvedValue(payload())
+      const { wrapper } = await setup()
+      expect(columns(wrapper)).toBe('3')
+      useAuthStore().user = { id: 8 }
+      await nextTick()
+      expect(columns(wrapper)).toBe('2')
+      expect(checked(wrapper)).toEqual(['2 columns'])
+      // Reading another account's choice never overwrites the first one's.
+      expect(localStorage.getItem('cs-board-columns-v1:7')).toBe('3')
+    })
+
+    it('moves with the arrow keys, Home and End, and takes focus along', async () => {
+      api.get.mockResolvedValue(payload())
+      const { wrapper } = await setup()
+      const press = async (key) => {
+        const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+        document.activeElement.dispatchEvent(event)
+        await settle()
+        return event.defaultPrevented
+      }
+      options(wrapper)[2].element.focus()
+      expect(await press('ArrowLeft')).toBe(true)
+      expect(checked(wrapper)).toEqual(['3 columns'])
+      expect(document.activeElement).toBe(options(wrapper)[1].element)
+      await press('ArrowUp')
+      expect(checked(wrapper)).toEqual(['2 columns'])
+      // Wraps at both ends.
+      await press('ArrowLeft')
+      expect(checked(wrapper)).toEqual(['4 columns'])
+      await press('ArrowRight')
+      expect(checked(wrapper)).toEqual(['2 columns'])
+      await press('ArrowDown')
+      expect(checked(wrapper)).toEqual(['3 columns'])
+      await press('End')
+      expect(checked(wrapper)).toEqual(['4 columns'])
+      expect(document.activeElement).toBe(options(wrapper)[2].element)
+      await press('Home')
+      expect(checked(wrapper)).toEqual(['2 columns'])
+      expect(columns(wrapper)).toBe('2')
+      expect(localStorage.getItem('cs-board-columns-v1:7')).toBe('2')
+      // Any other key is left alone.
+      expect(await press('a')).toBe(false)
+      expect(await press('Tab')).toBe(false)
+      expect(checked(wrapper)).toEqual(['2 columns'])
+    })
+
+    it('still works in a browser that refuses storage', async () => {
+      // Only the density's own key: other stores read theirs as they always do.
+      const realGet = Storage.prototype.getItem
+      const realSet = Storage.prototype.setItem
+      const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (key) {
+        if (String(key).startsWith('cs-board-columns')) throw new Error('denied')
+        return realGet.call(this, key)
+      })
+      const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+        if (String(key).startsWith('cs-board-columns')) throw new Error('quota')
+        return realSet.call(this, key, value)
+      })
+      try {
+        api.get.mockResolvedValue(payload())
+        const { wrapper } = await setup()
+        expect(columns(wrapper)).toBe('4')
+        await options(wrapper)[1].trigger('click')
+        expect(columns(wrapper)).toBe('3')
+        expect(checked(wrapper)).toEqual(['3 columns'])
+        expect(get.mock.calls.some(([key]) => String(key).startsWith('cs-board-columns'))).toBe(true)
+        expect(set.mock.calls.some(([key]) => String(key).startsWith('cs-board-columns'))).toBe(true)
+      } finally {
+        get.mockRestore()
+        set.mockRestore()
+      }
+    })
+
+    it('ignores a stored value that is not a density', async () => {
+      localStorage.setItem('cs-board-columns-v1:7', '12')
+      api.get.mockResolvedValue(payload())
+      const { wrapper } = await setup()
+      expect(columns(wrapper)).toBe('4')
+      expect(checked(wrapper)).toEqual(['4 columns'])
+    })
   })
 
   it('opens a panel from ?widget and saves nothing, even for a widget off the board', async () => {
@@ -225,7 +393,7 @@ describe('AnalyticsBoardPage', () => {
     wrapper.find('button[aria-label="Board options"]').element.focus()
     await settle()
     expect(document.body.querySelector('.ag-tooltip').textContent).toContain(
-      'Reset board puts back Ask AI and Prompt ranking; your data is not touched.',
+      'Reset board puts back the six widgets a new board starts with; your data is not touched.',
     )
   })
 
@@ -248,7 +416,7 @@ describe('AnalyticsBoardPage', () => {
     const { wrapper } = await setup()
     await addButton(wrapper).trigger('click')
     await flushPromises()
-    const row = [...document.body.querySelectorAll('li.bd-cat-row')].find((r) => r.textContent.includes('AI crawlers'))
+    const row = [...document.body.querySelectorAll('li.bd-cat-tile')].find((r) => r.textContent.includes('AI crawlers'))
     row.querySelector('button').click()
     await flushPromises()
     document.body.querySelector('.ag-dialog .ag-dlg-close').click()
@@ -270,7 +438,7 @@ describe('AnalyticsBoardPage', () => {
     const dialog = document.body.querySelector('[role="alertdialog"]')
     expect(dialog.textContent).toContain('Reset this board?')
     expect(dialog.textContent).toContain(
-      'Your board goes back to Ask AI and Prompt ranking. Widgets you added are removed; their data is not touched.',
+      'Your board goes back to the six widgets a new board starts with. Widgets you added are removed; their data is not touched.',
     )
     expect(api.reset).not.toHaveBeenCalled()
     ;[...dialog.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Reset board').click()
@@ -494,7 +662,7 @@ describe('AnalyticsBoardPage', () => {
       expect(wrapper.find('.bd-top [data-setup-panel]').exists()).toBe(false)
 
       const pointers = wrapper.findAll('.bd-cell .bd-setup-pointer')
-      expect(pointers).toHaveLength(2)
+      expect(pointers).toHaveLength(6)
       expect(pointers[0].text()).toContain('See Setup at the top of this page for what to do next.')
 
       // Show setup from a card unfolds the panel and takes focus there.

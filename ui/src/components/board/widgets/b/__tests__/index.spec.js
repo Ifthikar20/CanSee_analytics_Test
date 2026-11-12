@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { WIDGETS } from '@/lib/board/widgets'
 import widgetsB from '../index.js'
 
-// Group A's keys (board_ownership.md 2) and group C's (Ask AI and Prompt
-// ranking, autopilot_frontend.md 6b); every other catalog key is group B's.
+// Group A's keys (board_ownership.md 2), group C's (Ask AI and Prompt
+// ranking, autopilot_frontend.md 6b), group D's (the four blocks that open a
+// new board) and group E's (the account and project blocks); every other
+// catalog key is group B's.
 const GROUP_A = ['summary', 'prompts', 'countries', 'traffic', 'ai-traffic', 'ai-crawlers']
 const GROUP_C = ['prompt-box', 'ranking']
+const GROUP_D = ['watch', 'asked-answered', 'answer-rank', 'visibility-score']
+const GROUP_E = ['prompt-runs', 'next-steps', 'latest-report']
+const OTHERS = [...GROUP_A, ...GROUP_C, ...GROUP_D, ...GROUP_E]
 
 // Loading every page module cold takes a while in a full run.
 const SLOW = 30_000
@@ -13,7 +18,7 @@ const SLOW = 30_000
 describe('group B widgets', () => {
     it('covers the other thirteen catalog keys, in catalog order', () => {
         expect(Object.keys(widgetsB)).toEqual(
-            WIDGETS.map((w) => w.key).filter((key) => !GROUP_A.includes(key) && !GROUP_C.includes(key)),
+            WIDGETS.map((w) => w.key).filter((key) => !OTHERS.includes(key)),
         )
         expect(Object.keys(widgetsB)).toHaveLength(13)
     })

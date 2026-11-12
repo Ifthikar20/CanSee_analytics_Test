@@ -109,13 +109,20 @@ describe('layout edits', () => {
     expect(sameLayout(null, [])).toBe(false)
   })
 
-  it('copies the default layout: Ask AI, then Prompt ranking', () => {
+  it('copies the default layout: a row of four, then Ask AI and Prompt ranking', () => {
     const a = defaultLayout()
     a[0].size = 'half'
+    a.pop()
     expect(defaultLayout()).toEqual([
+      { key: 'watch', size: 'third' },
+      { key: 'asked-answered', size: 'third' },
+      { key: 'answer-rank', size: 'third' },
+      { key: 'visibility-score', size: 'third' },
       { key: 'prompt-box', size: 'full' },
       { key: 'ranking', size: 'full' },
     ])
+    // What the default is, a saved board may be too.
+    expect(normalizeLayout(defaultLayout())).toEqual(defaultLayout())
   })
 
   it('lets Ask AI and Prompt ranking be half or full width, never a third', () => {

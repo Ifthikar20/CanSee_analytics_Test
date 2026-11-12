@@ -15,11 +15,26 @@ const DEFAULT_PAYLOAD = {
   version: 0,
   updated_at: null,
   widgets: [
+    { key: 'watch', size: 'third' },
+    { key: 'asked-answered', size: 'third' },
+    { key: 'answer-rank', size: 'third' },
+    { key: 'visibility-score', size: 'third' },
     { key: 'prompt-box', size: 'full' },
     { key: 'ranking', size: 'full' },
   ],
 }
-const DEFAULT_KEYS = ['prompt-box', 'ranking']
+const DEFAULT_KEYS = ['watch', 'asked-answered', 'answer-rank', 'visibility-score', 'prompt-box', 'ranking']
+// A two-card board nobody has saved yet: where the saving tests start.
+const START = {
+  saved: false,
+  version: 0,
+  updated_at: null,
+  widgets: [
+    { key: 'prompt-box', size: 'full' },
+    { key: 'ranking', size: 'full' },
+  ],
+}
+const START_KEYS = ['prompt-box', 'ranking']
 const SAVED = (version, widgets) => ({ saved: true, version, updated_at: '2026-11-04T10:12:00Z', widgets })
 const CACHE_KEY = 'cs-board-v1:7:w1'
 
@@ -165,14 +180,14 @@ describe('loading a board', () => {
 
 describe('saving a board', () => {
   beforeEach(async () => {
-    api.get.mockReturnValue(ok(DEFAULT_PAYLOAD))
+    api.get.mockReturnValue(ok(START))
     await store.load('w1')
   })
 
   it('applies an edit at once and saves it 400ms later, once for a burst', async () => {
     api.save.mockImplementation((wid, body) => ok(SAVED(body.version + 1, body.widgets)))
     expect(store.add('w1', 'ai-crawlers')).toBe(true)
-    expect(keys(store)).toEqual([...DEFAULT_KEYS, 'ai-crawlers'])
+    expect(keys(store)).toEqual([...START_KEYS, 'ai-crawlers'])
     expect(JSON.parse(localStorage.getItem(CACHE_KEY)).widgets.at(-1)).toEqual({ key: 'ai-crawlers', size: 'third' })
     expect(store.move('w1', 'ai-crawlers', -1)).toBe(true)
     expect(store.resize('w1', 'ai-crawlers', 'half')).toBe(true)
@@ -207,7 +222,7 @@ describe('saving a board', () => {
     expect(api.save).toHaveBeenCalledTimes(1)
 
     api.save.mockImplementationOnce((wid, body) => ok(SAVED(body.version + 1, body.widgets)))
-    first.resolve(SAVED(1, [DEFAULT_PAYLOAD.widgets[0]]))
+    first.resolve(SAVED(1, [START.widgets[0]]))
     await vi.runAllTimersAsync()
     expect(api.save).toHaveBeenCalledTimes(2)
     expect(api.save.mock.calls[1][1]).toEqual({
@@ -253,7 +268,7 @@ describe('saving a board', () => {
     api.save.mockImplementationOnce((wid, body) => ok(SAVED(body.version + 1, body.widgets)))
     await store.retrySave('w1')
     expect(api.save).toHaveBeenCalledTimes(2)
-    expect(api.save.mock.calls[1][1]).toEqual({ version: 0, widgets: DEFAULT_PAYLOAD.widgets.slice(1) })
+    expect(api.save.mock.calls[1][1]).toEqual({ version: 0, widgets: START.widgets.slice(1) })
     expect(store.layoutOf('w1')).toMatchObject({ save: 'idle', version: 1 })
   })
 
@@ -271,7 +286,7 @@ describe('saving a board', () => {
     await Promise.resolve()
     expect(api.reset).not.toHaveBeenCalled()
 
-    inflight.resolve(SAVED(1, [...DEFAULT_PAYLOAD.widgets, { key: 'pages', size: 'half' }]))
+    inflight.resolve(SAVED(1, [...START.widgets, { key: 'pages', size: 'half' }]))
     await vi.advanceTimersByTimeAsync(0)
     expect(api.reset).toHaveBeenCalledWith('w1')
     answer.resolve(SAVED(2, DEFAULT_PAYLOAD.widgets))

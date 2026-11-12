@@ -18,10 +18,15 @@ from apps.boards.layout import (
 from apps.boards.models import BoardLayout
 from core.exceptions import CanseeException
 
-# Board contract 3 with wave 4's two keys first (wave 4 contract 6), in
-# catalog order: each key and its default size. The frontend's
+# The catalog in order, each key and its default size: the four blocks that
+# open a new board, board contract 3 with wave 4's two keys first (wave 4
+# contract 6), then the account and project blocks. The frontend's
 # src/lib/board/widgets.js is tested against the same table.
 CONTRACT_WIDGETS = [
+    ("watch", "third"),
+    ("asked-answered", "third"),
+    ("answer-rank", "third"),
+    ("visibility-score", "third"),
     ("prompt-box", "full"),
     ("ranking", "full"),
     ("summary", "full"),
@@ -43,9 +48,20 @@ CONTRACT_WIDGETS = [
     ("prompt-research", "half"),
     ("competitors", "half"),
     ("products", "half"),
+    ("prompt-runs", "third"),
+    ("next-steps", "third"),
+    ("latest-report", "half"),
 ]
-# Ask AI and Prompt ranking (wave 4 contract 6).
-DEFAULT = [{"key": "prompt-box", "size": "full"}, {"key": "ranking", "size": "full"}]
+# A row of four small blocks, then Ask AI and Prompt ranking (wave 4
+# contract 6).
+DEFAULT = [
+    {"key": "watch", "size": "third"},
+    {"key": "asked-answered", "size": "third"},
+    {"key": "answer-rank", "size": "third"},
+    {"key": "visibility-score", "size": "third"},
+    {"key": "prompt-box", "size": "full"},
+    {"key": "ranking", "size": "full"},
+]
 
 
 def refused(raw) -> dict:
@@ -62,7 +78,11 @@ def refused(raw) -> dict:
 
 def test_the_catalog_is_the_contract_table():
     assert list(WIDGETS.items()) == CONTRACT_WIDGETS
-    assert len(WIDGETS) == 21
+    assert len(WIDGETS) == 28
+    # The board numbers its blocks by this order, so the 21 keys of contract
+    # 3 keep their places between the four that lead and the three that end.
+    assert list(WIDGETS)[4:6] == ["prompt-box", "ranking"]
+    assert list(WIDGETS)[-3:] == ["prompt-runs", "next-steps", "latest-report"]
     assert SIZES == ("third", "half", "full")
     assert set(WIDGETS.values()) <= set(SIZES)
 

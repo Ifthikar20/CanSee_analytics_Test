@@ -57,7 +57,9 @@ describe('DocsPage', () => {
     expect(wrapper.find('section#overview h2').text()).toBe('Analytics')
     expect(wrapper.find('section#prompt h2').text()).toBe('Prompt detail')
     expect(wrapper.find('section#sources h2').text()).toBe('Citations')
-    expect(wrapper.find('section#overview').text()).toContain('The board starts with Ask AI and Prompt ranking.')
+    expect(wrapper.find('section#overview').text()).toContain(
+      'The board starts with a row of four small cards (Watch, Asked and answered, Rank in AI answers and Visibility score), then Ask AI and Prompt ranking.',
+    )
     expect(wrapper.find('section#quickstart').text()).toContain('On Analytics, choose Add prompts in Prompts')
   })
 })

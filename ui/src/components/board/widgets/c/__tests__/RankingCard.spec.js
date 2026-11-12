@@ -8,8 +8,16 @@ const { default: RankingCard } = await import('../RankingCard.vue')
 
 const mounted = []
 
+// What the card tells its frame (the chip in the card's corner).
+const reported = []
+const { CARD_STATUS } = await import('@/lib/board/context')
+
 async function render(props = {}) {
-    const out = await mountOnBoard(RankingCard, { props: { size: 'full', ...props } })
+    reported.length = 0
+    const out = await mountOnBoard(RankingCard, {
+        props: { size: 'full', ...props },
+        provide: { [CARD_STATUS]: (status) => reported.push(status) },
+    })
     mounted.push(out.wrapper)
     return out
 }
@@ -42,6 +50,39 @@ afterEach(() => {
 })
 
 describe('RankingCard', () => {
+    it('tells its frame what it shows: live only with ranked prompts fresh from the API', async () => {
+        const { wrapper } = await render()
+        expect(reported.at(-1)).toBe('loading')
+
+        setSource('ranking', { failure: { status: 500, code: 'error', message: 'Something went wrong.' } })
+        await wrapper.vm.$nextTick()
+        expect(reported.at(-1)).toBe('error')
+
+        // No tracked prompt: nothing to rank, never live.
+        setSource('ranking', { data: rankingPayload({ prompts: [], tracked: { count: 0, limit: 100, over_limit: 0 } }) })
+        await wrapper.vm.$nextTick()
+        expect(wrapper.find('.rk-state.is-inline').exists()).toBe(true)
+        expect(reported.at(-1)).toBe('empty')
+
+        setSource('ranking', { data: rankingPayload({ prompts: rankedRows(3) }) })
+        await wrapper.vm.$nextTick()
+        expect(reported.at(-1)).toBe('live')
+
+        // The last numbers after a refresh that failed are not fresh.
+        setSource('ranking', {
+            data: rankingPayload({ prompts: rankedRows(3) }),
+            failure: { status: 500, code: 'error', message: 'x' },
+            stale: true,
+        })
+        await wrapper.vm.$nextTick()
+        expect(reported.at(-1)).toBe('stale')
+        expect(reported).not.toContain(undefined)
+
+        // The report is withdrawn with the card.
+        mounted.pop().unmount()
+        expect(reported.at(-1)).toBeNull()
+    })
+
     it('shows a skeleton while the ranking loads, and the common error with Try again', async () => {
         const { wrapper } = await render()
         expect(wrapper.find('.bd-skel').exists()).toBe(true)

@@ -4,10 +4,13 @@ import { WIDGET_COMPONENTS } from '@/components/board/widgetComponents'
 import widgetsC from '../index.js'
 
 describe('group C widgets', () => {
-    it('covers Ask AI and Prompt ranking, the first two catalog keys and the default board', () => {
+    it('covers Ask AI and Prompt ranking: the wide cards of the default board, after its row of four', () => {
         expect(Object.keys(widgetsC)).toEqual(['prompt-box', 'ranking'])
-        expect(WIDGETS.slice(0, 2).map((w) => w.key)).toEqual(['prompt-box', 'ranking'])
-        expect(DEFAULT_LAYOUT.map((w) => w.key)).toEqual(['prompt-box', 'ranking'])
+        expect(WIDGETS.slice(4, 6).map((w) => w.key)).toEqual(['prompt-box', 'ranking'])
+        expect(DEFAULT_LAYOUT.slice(-2).map((w) => ({ ...w }))).toEqual([
+            { key: 'prompt-box', size: 'full' },
+            { key: 'ranking', size: 'full' },
+        ])
         // The board finds them with every other widget.
         expect(WIDGET_COMPONENTS['prompt-box']).toBe(widgetsC['prompt-box'])
         expect(WIDGET_COMPONENTS.ranking).toBe(widgetsC.ranking)

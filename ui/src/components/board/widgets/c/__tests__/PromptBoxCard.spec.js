@@ -69,6 +69,37 @@ afterEach(() => {
 })
 
 describe('PromptBoxCard', () => {
+    it('tells its frame it is a tool that is ready, never that it holds live numbers', async () => {
+        const { CARD_STATUS } = await import('@/lib/board/context')
+        const reported = []
+        let answer
+        promptBox.list.mockReturnValue(new Promise((resolve) => (answer = resolve)))
+        const { wrapper } = await mountOnBoard(PromptBoxCard, {
+            props: { size: 'full' },
+            provide: { [CARD_STATUS]: (status) => reported.push(status) },
+        })
+        mounted.push(wrapper)
+        expect(reported.at(-1)).toBe('loading')
+        answer(ok([]))
+        await flushPromises()
+        expect(reported.at(-1)).toBe('ready')
+        expect(reported).not.toContain('live')
+    })
+
+    it('tells its frame when the runs could not be loaded', async () => {
+        const { CARD_STATUS } = await import('@/lib/board/context')
+        const reported = []
+        promptBox.list.mockRejectedValue(httpError(500))
+        const { wrapper } = await mountOnBoard(PromptBoxCard, {
+            props: { size: 'full' },
+            provide: { [CARD_STATUS]: (status) => reported.push(status) },
+        })
+        mounted.push(wrapper)
+        await flushPromises()
+        expect(wrapper.find('.pb-state[role="alert"]').exists()).toBe(true)
+        expect(reported.at(-1)).toBe('error')
+    })
+
     it('shows a skeleton until the runs answer, then the box and why to ask several times', async () => {
         let answer
         promptBox.list.mockReturnValue(new Promise((resolve) => (answer = resolve)))
