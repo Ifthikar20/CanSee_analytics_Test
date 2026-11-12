@@ -12,7 +12,6 @@ import CardFoot from '../CardFoot.vue'
 import ComingUp from '../ComingUp.vue'
 import CardShell from '../widgets/a/CardShell.vue'
 import CardFrame from '../widgets/b/CardFrame.vue'
-import widgetsD from '../widgets/d/index.js'
 import widgetsE from '../widgets/e/index.js'
 
 enableAutoUnmount(afterEach)
@@ -154,8 +153,10 @@ describe('ComingUp and the cards that wait for their blocks', () => {
     expect(wrapper.find('.bd-soon-label').exists()).toBe(true)
   })
 
+  // Group D's cards are built: widgets/d/__tests__/cards.spec.js covers what
+  // each one reports to its frame.
   it('never lets a card that is not built yet claim live data', async () => {
-    for (const [key, entry] of Object.entries({ ...widgetsD, ...widgetsE })) {
+    for (const [key, entry] of Object.entries(widgetsE)) {
       const card = (await entry.card()).default
       const { wrapper, reported } = await mountFramed(card, { websiteId: 'w1' })
       const meta = WIDGETS.find((w) => w.key === key)
